@@ -219,6 +219,8 @@ function drawBoat(
   ctx.restore();
 }
 
+
+
 function drawMonohull(ctx: CanvasRenderingContext2D, boat: Boat): void {
   // Hull — elongated pointed shape
   ctx.beginPath();

@@ -5,6 +5,7 @@ import { initEngine, type EngineAPI } from '@/lib/map/engine';
 import type { EditTool } from '@/lib/map/types';
 import { ROUTE_COLORS } from '@/lib/map/types';
 import { HUD, type HUDHandle } from './HUD';
+import { BoatLabels, type BoatLabelsHandle } from './BoatLabels';
 
 const TOOLS: { id: Exclude<EditTool, null>; label: string; icon: React.ReactNode }[] = [
   {
@@ -57,6 +58,7 @@ const TOOLS: { id: Exclude<EditTool, null>; label: string; icon: React.ReactNode
 export default function MapCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hudRef = useRef<HUDHandle>(null);
+  const labelsRef = useRef<BoatLabelsHandle>(null);
   const engineRef = useRef<EngineAPI>(null);
   const [activeTool, setActiveTool] = useState<EditTool>(null);
   const [routeColor, setRouteColor] = useState(ROUTE_COLORS[0].hex);
@@ -74,6 +76,9 @@ export default function MapCanvas() {
     const engine = initEngine(canvas, undefined, {
       onTelemetryUpdate(_boatId, lat, lon, speed, heading) {
         hudRef.current?.update(lat, lon, speed, heading);
+      },
+      onBoatPositions(boats) {
+        labelsRef.current?.update(boats);
       },
     });
 
@@ -105,6 +110,7 @@ export default function MapCanvas() {
   return (
     <>
       <canvas ref={canvasRef} className="map-canvas" />
+      <BoatLabels ref={labelsRef} />
 
       <div className="toolbar">
         {TOOLS.map((tool) => (

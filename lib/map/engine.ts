@@ -32,9 +32,21 @@ const BOAT_DEFS: { id: string; label: string; type: BoatType; hull: string; acce
 const BUOY_HIT_RADIUS = 20;
 const BOAT_HIT_RADIUS = 22;
 
+export interface BoatScreenInfo {
+  id: string;
+  label: string;
+  type: string;
+  x: number;
+  y: number;
+  speed: number;
+  isFollowed: boolean;
+  accentColor: string;
+}
+
 export interface EngineCallbacks {
   onTelemetryUpdate?: (boatId: string, lat: number, lon: number, speed: number, heading: number) => void;
   onBuoysChange?: (buoys: Buoy[]) => void;
+  onBoatPositions?: (boats: BoatScreenInfo[]) => void;
 }
 
 export interface EngineAPI {
@@ -120,7 +132,6 @@ export function initEngine(
   const tiles = new TileCache(config);
 
   let rafId = 0;
-  let tickId = 0;
   let running = true;
 
   const recycledNumbers: number[] = [];
@@ -277,11 +288,15 @@ export function initEngine(
     },
   });
 
-  // --- Simulation tick ---
-  function tickBoat(boat: Boat) {
-    const speedVar = boat.baseSpeed + Math.sin(Date.now() / 3000 + boat.speedPhaseOffset) * 2;
-    // Faster boats advance quicker along the route
-    const advance = 0.0012 + (speedVar - 6) * 0.0002;
+  // --- Simulation (runs inside requestAnimationFrame with delta time) ---
+  const TICK_RATE = 50; // base simulation rate in ms
+  let trailAccum = 0;
+  const TRAIL_INTERVAL = 50; // add trail point every 50ms
+
+  function tickBoat(boat: Boat, dt: number) {
+    const now = Date.now();
+    const speedVar = boat.baseSpeed + Math.sin(now / 3000 + boat.speedPhaseOffset) * 2;
+    const advance = (0.0012 + (speedVar - 6) * 0.0002) * (dt / TICK_RATE);
 
     boat.routeT += advance;
     if (boat.routeT >= 1) {
@@ -297,18 +312,25 @@ export function initEngine(
     let diff = boat.headingTarget - boat.heading;
     if (diff > 180) diff -= 360;
     if (diff < -180) diff += 360;
-    boat.heading += diff * 0.08;
+    boat.heading += diff * Math.min(1, 0.08 * (dt / TICK_RATE));
     boat.heading = ((boat.heading % 360) + 360) % 360;
 
     boat.speed = speedVar;
-
-    boat.trail.push([boat.lat, boat.lon]);
-    if (boat.trail.length > config.maxTrailLength) boat.trail.shift();
   }
 
-  function tick() {
+  function tick(dt: number) {
     for (const boat of state.boats) {
-      tickBoat(boat);
+      tickBoat(boat, dt);
+    }
+
+    // Trail points at fixed interval (not every frame)
+    trailAccum += dt;
+    if (trailAccum >= TRAIL_INTERVAL) {
+      trailAccum -= TRAIL_INTERVAL;
+      for (const boat of state.boats) {
+        boat.trail.push([boat.lat, boat.lon]);
+        if (boat.trail.length > config.maxTrailLength) boat.trail.shift();
+      }
     }
 
     // Follow selected boat
@@ -319,7 +341,6 @@ export function initEngine(
         const dx = w.x - state.worldCX;
         const dy = w.y - state.worldCY;
         const dist = Math.hypot(dx, dy);
-        // Snap when far, smooth only when very close
         const t = dist > 0.0001 ? 1 : 0.35;
         state.worldCX += dx * t;
         state.worldCY += dy * t;
@@ -332,15 +353,39 @@ export function initEngine(
     }
   }
 
-  // --- Render loop ---
-  function render() {
+  // --- Unified render loop ---
+  let lastTime = 0;
+
+  function frame(time: number) {
     if (!running) return;
+    const dt = lastTime ? Math.min(time - lastTime, 100) : 16; // cap at 100ms
+    lastTime = time;
+
+    tick(dt);
     renderFrame(ctx, state, config, tiles);
-    rafId = requestAnimationFrame(render);
+
+    // Emit boat screen positions for DOM labels
+    if (callbacks.onBoatPositions) {
+      const infos: BoatScreenInfo[] = [];
+      for (const boat of state.boats) {
+        const p = geoToScreen(
+          boat.lat, boat.lon, state.worldCX, state.worldCY,
+          state.zoom, config.tileSize, state.width, state.height,
+        );
+        infos.push({
+          id: boat.id, label: boat.label, type: boat.type,
+          x: p.x, y: p.y, speed: boat.speed,
+          isFollowed: boat.id === state.followBoatId,
+          accentColor: boat.accentColor,
+        });
+      }
+      callbacks.onBoatPositions(infos);
+    }
+
+    rafId = requestAnimationFrame(frame);
   }
 
-  tickId = window.setInterval(tick, 50);
-  rafId = requestAnimationFrame(render);
+  rafId = requestAnimationFrame(frame);
 
   return {
     addBuoy,
@@ -375,7 +420,6 @@ export function initEngine(
     destroy() {
       running = false;
       cancelAnimationFrame(rafId);
-      clearInterval(tickId);
       window.removeEventListener('resize', resize);
       detachInput();
     },
