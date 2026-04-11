@@ -83,6 +83,9 @@ export interface MapState {
   dragStartY: number;
   followBoatId: string | null;
 
+  // Tile rendering — the zoom level currently being drawn (changes only when new tiles are ready)
+  activeZi: number;
+
   // Boats
   boats: Boat[];
 

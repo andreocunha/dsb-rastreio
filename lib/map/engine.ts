@@ -88,6 +88,7 @@ export function createMapState(config: MapConfig = DEFAULT_CONFIG): MapState {
     dragStartX: 0,
     dragStartY: 0,
     followBoatId: null,
+    activeZi: 17,
     boats: createBoats(),
     buoys: [],
     finishLine: { p1: null, p2: null },

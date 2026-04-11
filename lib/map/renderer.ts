@@ -12,46 +12,12 @@ export function renderFrame(
   const { width: W, height: H, zoom, worldCX, worldCY } = state;
   const TS = config.tileSize;
 
-  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0c1225';
+  ctx.fillRect(0, 0, W, H);
 
-  // --- Tiles ---
-  const zi = Math.round(zoom);
-  const frac = Math.pow(2, zoom - zi);
-  const tds = TS * frac;
-  const mx = 1 << zi;
-  const tcx = worldCX * mx;
-  const tcy = worldCY * mx;
-  const hw = W / 2 / tds;
-  const hh = H / 2 / tds;
-  const x0 = Math.floor(tcx - hw) - 1;
-  const x1 = Math.ceil(tcx + hw) + 1;
-  const y0 = Math.floor(tcy - hh) - 1;
-  const y1 = Math.ceil(tcy + hh) + 1;
-
-  for (let tx = x0; tx <= x1; tx++) {
-    for (let ty = y0; ty <= y1; ty++) {
-      if (ty < 0 || ty >= mx) continue;
-      const wx = ((tx % mx) + mx) % mx;
-      const k = `${zi}/${wx}/${ty}`;
-      const sx = (tx - tcx) * tds + W / 2;
-      const sy = (ty - tcy) * tds + H / 2;
-      const ds = Math.ceil(tds) + 1;
-
-      const cached = tiles.get(k);
-      if (cached) {
-        ctx.drawImage(cached, sx, sy, ds, ds);
-      } else {
-        const fb = tiles.findFallback(zi, wx, ty);
-        if (fb) {
-          ctx.drawImage(fb.img, fb.sx, fb.sy, fb.sw, fb.sh, sx, sy, ds, ds);
-        } else {
-          ctx.fillStyle = '#0c1225';
-          ctx.fillRect(sx, sy, ds, ds);
-        }
-        tiles.load(k, zi, wx, ty);
-      }
-    }
-  }
+  // --- Tiles (stable zoom: only switch tile set when new level is loaded) ---
+  const targetZi = Math.max(config.zoomMin, Math.min(config.zoomMax, Math.round(zoom)));
+  renderTiles(ctx, state, config, tiles, W, H, TS, zoom, worldCX, worldCY, targetZi);
 
   // --- Trails (all boats, using pre-computed projection) ---
   const fp = createFrameProjection(
@@ -79,8 +45,90 @@ export function renderFrame(
   }
 }
 
+/** Compute tile grid bounds for a given zoom level */
+function tileGrid(
+  zi: number, zoom: number, ts: number,
+  worldCX: number, worldCY: number, W: number, H: number,
+) {
+  const frac = Math.pow(2, zoom - zi);
+  const tds = ts * frac;
+  const mx = 1 << zi;
+  const tcx = worldCX * mx;
+  const tcy = worldCY * mx;
+  const hw = W / 2 / tds;
+  const hh = H / 2 / tds;
+  return {
+    frac, tds, mx, tcx, tcy,
+    x0: Math.floor(tcx - hw) - 1,
+    x1: Math.ceil(tcx + hw) + 1,
+    y0: Math.floor(tcy - hh) - 1,
+    y1: Math.ceil(tcy + hh) + 1,
+  };
+}
 
-const MIN_TRAIL_SEG_PX = 2; // skip points closer than 2px on screen
+/** Draw tiles from state.activeZi. Only switch to targetZi when its tiles are ready. */
+function renderTiles(
+  ctx: CanvasRenderingContext2D,
+  state: MapState,
+  config: MapConfig,
+  tiles: TileCache,
+  W: number, H: number, TS: number,
+  zoom: number, worldCX: number, worldCY: number,
+  targetZi: number,
+): void {
+  // Clamp activeZi to valid range
+  if (state.activeZi < config.zoomMin) state.activeZi = config.zoomMin;
+  if (state.activeZi > config.zoomMax) state.activeZi = config.zoomMax;
+
+  // If target changed, check if we can switch
+  if (targetZi !== state.activeZi) {
+    const tg = tileGrid(targetZi, zoom, TS, worldCX, worldCY, W, H);
+    const { loaded, total } = tiles.countLoaded(targetZi, tg.x0, tg.x1, tg.y0, tg.y1);
+
+    // Start loading target tiles
+    const tmx = 1 << targetZi;
+    for (let tx = tg.x0; tx <= tg.x1; tx++) {
+      for (let ty = tg.y0; ty <= tg.y1; ty++) {
+        if (ty < 0 || ty >= tmx) continue;
+        const wx = ((tx % tmx) + tmx) % tmx;
+        tiles.load(`${targetZi}/${wx}/${ty}`, targetZi, wx, ty);
+      }
+    }
+
+    // Switch when 70%+ loaded
+    if (total > 0 && loaded / total >= 0.7) {
+      state.activeZi = targetZi;
+    }
+  }
+
+  // Render from activeZi (always consistent — no mixed zoom levels)
+  const g = tileGrid(state.activeZi, zoom, TS, worldCX, worldCY, W, H);
+
+  for (let tx = g.x0; tx <= g.x1; tx++) {
+    for (let ty = g.y0; ty <= g.y1; ty++) {
+      if (ty < 0 || ty >= g.mx) continue;
+      const wx = ((tx % g.mx) + g.mx) % g.mx;
+      const k = `${state.activeZi}/${wx}/${ty}`;
+      const sx = (tx - g.tcx) * g.tds + W / 2;
+      const sy = (ty - g.tcy) * g.tds + H / 2;
+      const ds = Math.ceil(g.tds) + 1;
+
+      const cached = tiles.get(k);
+      if (cached) {
+        ctx.drawImage(cached, sx, sy, ds, ds);
+      } else {
+        // Fallback from any other cached zoom
+        const fb = tiles.findFallback(state.activeZi, wx, ty);
+        if (fb) {
+          ctx.drawImage(fb.img, fb.sx, fb.sy, fb.sw, fb.sh, sx, sy, ds, ds);
+        }
+        tiles.load(k, state.activeZi, wx, ty);
+      }
+    }
+  }
+}
+
+const MIN_TRAIL_SEG_PX = 2;
 
 function drawTrail(
   ctx: CanvasRenderingContext2D,
