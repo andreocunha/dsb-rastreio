@@ -98,17 +98,26 @@ export function attachInputHandlers(
     if (e.touches.length !== 2 || state.lastPinchDist <= 0) return;
     const t = e.touches;
     const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, state.zoom + Math.log2(d / state.lastPinchDist)));
+    const rawZoom = state.zoom + Math.log2(d / state.lastPinchDist);
+    const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, rawZoom));
 
     const mx = (t[0].clientX + t[1].clientX) / 2;
     const my = (t[0].clientY + t[1].clientY) / 2;
-    zoomAt(state, config, mx, my, nz);
-    // Pan by pinch midpoint movement
+
+    // Only apply zoom if it actually changed — prevents flicker at limits
+    if (nz !== state.zoom) {
+      zoomAt(state, config, mx, my, nz);
+    }
+
+    // Pan by pinch midpoint movement (always, even at zoom limit)
     const s1 = worldScale(state.zoom, config.tileSize);
     state.worldCX -= (mx - state.pinchMidX) / s1;
     state.worldCY -= (my - state.pinchMidY) / s1;
 
-    state.lastPinchDist = d;
+    // Only update pinch distance if zoom wasn't clamped — prevents accumulation
+    if (rawZoom >= config.zoomMin && rawZoom <= config.zoomMax) {
+      state.lastPinchDist = d;
+    }
     state.pinchMidX = mx;
     state.pinchMidY = my;
   }, { passive: true });
