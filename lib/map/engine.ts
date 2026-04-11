@@ -1,4 +1,4 @@
-import type { MapState, MapConfig, Buoy, Boat, EditTool } from './types';
+import type { MapState, MapConfig, Buoy, Boat, EditTool, BoatType } from './types';
 import { geoToWorld, geoToScreen, screenToGeo, bearing } from './geo';
 import { TileCache } from './tiles';
 import { renderFrame } from './renderer';
@@ -15,12 +15,18 @@ const DEMO_ROUTE: [number, number][] = [
   [-22.414654, -41.818751],
 ];
 
-const BOAT_DEFS: { id: string; label: string; hull: string; accent: string; baseSpeed: number; startOffset: number }[] = [
-  { id: 'b1', label: 'Barco 1', hull: '#ffffff', accent: '#00aaff', baseSpeed: 8.5, startOffset: 0 },
-  { id: 'b2', label: 'Barco 2', hull: '#ffe066', accent: '#e6a800', baseSpeed: 7.8, startOffset: 0.06 },
-  { id: 'b3', label: 'Barco 3', hull: '#ff6666', accent: '#cc0000', baseSpeed: 9.0, startOffset: 0.12 },
-  { id: 'b4', label: 'Barco 4', hull: '#66ff99', accent: '#00b33c', baseSpeed: 7.2, startOffset: 0.18 },
-  { id: 'b5', label: 'Barco 5', hull: '#cc99ff', accent: '#7733cc', baseSpeed: 8.0, startOffset: 0.24 },
+const BOAT_DEFS: { id: string; label: string; type: BoatType; hull: string; accent: string; baseSpeed: number; startOffset: number }[] = [
+  // Competidores
+  { id: 'b1', label: 'Barco 1', type: 'cat',  hull: '#ffffff', accent: '#00aaff', baseSpeed: 8.5, startOffset: 0 },
+  { id: 'b2', label: 'Barco 2', type: 'mono', hull: '#ffe066', accent: '#e6a800', baseSpeed: 7.8, startOffset: 0.06 },
+  { id: 'b3', label: 'Barco 3', type: 'cat',  hull: '#ff6666', accent: '#cc0000', baseSpeed: 9.0, startOffset: 0.12 },
+  { id: 'b4', label: 'Barco 4', type: 'mono', hull: '#66ff99', accent: '#00b33c', baseSpeed: 7.2, startOffset: 0.18 },
+  { id: 'b5', label: 'Barco 5', type: 'cat',   hull: '#cc99ff', accent: '#7733cc', baseSpeed: 8.0, startOffset: 0.24 },
+  { id: 'b6', label: 'Barco 6', type: 'arrow', hull: '#ffffff', accent: '#0af',    baseSpeed: 8.2, startOffset: 0.30 },
+  // Suporte
+  { id: 's1', label: 'Jet Ski Resgate', type: 'jetski',  hull: '#ff4444', accent: '#cc0000', baseSpeed: 12.0, startOffset: 0.40 },
+  { id: 's2', label: 'Barco Suporte',   type: 'support', hull: '#f0f0f0', accent: '#ff6600', baseSpeed: 10.0, startOffset: 0.55 },
+  { id: 's3', label: 'Jet Ski Resgate 2', type: 'jetski', hull: '#ff4444', accent: '#cc0000', baseSpeed: 11.5, startOffset: 0.70 },
 ];
 
 const BUOY_HIT_RADIUS = 20;
@@ -57,6 +63,7 @@ function createBoats(): Boat[] {
     return {
       id: def.id,
       label: def.label,
+      type: def.type,
       hullColor: def.hull,
       accentColor: def.accent,
       lat: from[0] + (to[0] - from[0]) * localT,

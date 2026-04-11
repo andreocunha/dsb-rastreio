@@ -47,9 +47,12 @@ export const ROUTE_COLORS: { id: string; hex: string; label: string }[] = [
   { id: 'yellow', hex: '#ffdd00', label: 'Amarelo' },
 ];
 
+export type BoatType = 'mono' | 'cat' | 'arrow' | 'jetski' | 'support';
+
 export interface Boat {
   id: string;
   label: string;
+  type: BoatType;
   hullColor: string;
   accentColor: string;
   lat: number;

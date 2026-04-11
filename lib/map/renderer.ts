@@ -190,13 +190,11 @@ function drawBoat(
   ctx.translate(bp.x, bp.y);
   ctx.rotate((boat.heading * Math.PI) / 180);
 
-  // --- Wake (esteira) ---
   drawWake(ctx, boat.speed);
 
-  // Selection ring when followed
   if (isFollowed) {
     ctx.beginPath();
-    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.arc(0, 0, 22, 0, Math.PI * 2);
     ctx.strokeStyle = boat.accentColor;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
@@ -206,11 +204,119 @@ function drawBoat(
 
   // Glow
   ctx.beginPath();
-  ctx.ellipse(0, 2, 9, 12, 0, 0, Math.PI * 2);
-  ctx.fillStyle = hexToRgba(boat.accentColor, 0.15);
+  ctx.ellipse(0, 1, 10, 14, 0, 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(boat.accentColor, 0.12);
   ctx.fill();
 
-  // Hull
+  switch (boat.type) {
+    case 'cat':     drawCatamaran(ctx, boat); break;
+    case 'mono':    drawMonohull(ctx, boat); break;
+    case 'jetski':  drawJetSki(ctx, boat); break;
+    case 'support': drawSupportBoat(ctx, boat); break;
+    case 'arrow':   drawArrow(ctx, boat); break;
+  }
+
+  ctx.restore();
+}
+
+function drawMonohull(ctx: CanvasRenderingContext2D, boat: Boat): void {
+  // Hull — elongated pointed shape
+  ctx.beginPath();
+  ctx.moveTo(0, -14);
+  ctx.bezierCurveTo(5, -6, 6, 6, 4, 13);
+  ctx.quadraticCurveTo(0, 16, -4, 13);
+  ctx.bezierCurveTo(-6, 6, -5, -6, 0, -14);
+  ctx.fillStyle = boat.hullColor;
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // Solar panel on top
+  drawSolarPanel(ctx, -4, -8, 8, 14);
+}
+
+function drawCatamaran(ctx: CanvasRenderingContext2D, boat: Boat): void {
+  const hullW = 2.5;
+  const hullGap = 5;
+
+  // Left hull
+  ctx.beginPath();
+  ctx.moveTo(-hullGap, -13);
+  ctx.bezierCurveTo(-hullGap + hullW, -6, -hullGap + hullW, 6, -hullGap + 1, 13);
+  ctx.quadraticCurveTo(-hullGap, 15, -hullGap - 1, 13);
+  ctx.bezierCurveTo(-hullGap - hullW, 6, -hullGap - hullW, -6, -hullGap, -13);
+  ctx.fillStyle = boat.hullColor;
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 0.8;
+  ctx.fill();
+  ctx.stroke();
+
+  // Right hull
+  ctx.beginPath();
+  ctx.moveTo(hullGap, -13);
+  ctx.bezierCurveTo(hullGap + hullW, -6, hullGap + hullW, 6, hullGap + 1, 13);
+  ctx.quadraticCurveTo(hullGap, 15, hullGap - 1, 13);
+  ctx.bezierCurveTo(hullGap - hullW, 6, hullGap - hullW, -6, hullGap, -13);
+  ctx.fillStyle = boat.hullColor;
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 0.8;
+  ctx.fill();
+  ctx.stroke();
+
+  // Cross beams
+  ctx.beginPath();
+  ctx.moveTo(-hullGap, -4);
+  ctx.lineTo(hullGap, -4);
+  ctx.moveTo(-hullGap, 5);
+  ctx.lineTo(hullGap, 5);
+  ctx.strokeStyle = '#bbb';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Solar panel spanning across both hulls
+  drawSolarPanel(ctx, -hullGap - 1, -8, (hullGap + 1) * 2, 14);
+}
+
+/** Draw a solar panel rectangle with grid lines */
+function drawSolarPanel(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+): void {
+  // Panel background
+  ctx.fillStyle = '#1a3a5c';
+  ctx.fillRect(x, y, w, h);
+
+  // Panel border
+  ctx.strokeStyle = '#4a7aaa';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(x, y, w, h);
+
+  // Grid lines (solar cells)
+  ctx.beginPath();
+  const cols = 2;
+  const rows = 4;
+  for (let c = 1; c < cols; c++) {
+    const lx = x + (w / cols) * c;
+    ctx.moveTo(lx, y);
+    ctx.lineTo(lx, y + h);
+  }
+  for (let r = 1; r < rows; r++) {
+    const ly = y + (h / rows) * r;
+    ctx.moveTo(x, ly);
+    ctx.lineTo(x + w, ly);
+  }
+  ctx.strokeStyle = 'rgba(100,160,210,0.4)';
+  ctx.lineWidth = 0.4;
+  ctx.stroke();
+
+  // Subtle reflection highlight
+  ctx.fillStyle = 'rgba(150,200,255,0.08)';
+  ctx.fillRect(x + 1, y + 1, w * 0.4, h * 0.3);
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, boat: Boat): void {
+  // Original boat shape — pointed hull with curves
   ctx.beginPath();
   ctx.moveTo(0, -16);
   ctx.bezierCurveTo(6, -4, 8, 8, 5, 14);
@@ -227,8 +333,74 @@ function drawBoat(
   ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
   ctx.fillStyle = boat.accentColor;
   ctx.fill();
+}
 
-  ctx.restore();
+function drawJetSki(ctx: CanvasRenderingContext2D, boat: Boat): void {
+  // Compact body
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.bezierCurveTo(4, -6, 5, 2, 4, 8);
+  ctx.quadraticCurveTo(0, 11, -4, 8);
+  ctx.bezierCurveTo(-5, 2, -4, -6, 0, -10);
+  ctx.fillStyle = boat.hullColor;
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // Seat
+  ctx.fillStyle = '#333';
+  ctx.fillRect(-2, -2, 4, 5);
+
+  // Handlebar
+  ctx.beginPath();
+  ctx.moveTo(-3, -4);
+  ctx.lineTo(0, -6);
+  ctx.lineTo(3, -4);
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Rescue cross
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, 3);
+  ctx.lineTo(0, 7);
+  ctx.moveTo(-2, 5);
+  ctx.lineTo(2, 5);
+  ctx.stroke();
+}
+
+function drawSupportBoat(ctx: CanvasRenderingContext2D, boat: Boat): void {
+  // Wider hull — motorboat shape
+  ctx.beginPath();
+  ctx.moveTo(0, -14);
+  ctx.bezierCurveTo(7, -6, 8, 4, 6, 12);
+  ctx.quadraticCurveTo(0, 16, -6, 12);
+  ctx.bezierCurveTo(-8, 4, -7, -6, 0, -14);
+  ctx.fillStyle = boat.hullColor;
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 1.2;
+  ctx.fill();
+  ctx.stroke();
+
+  // Cabin
+  ctx.beginPath();
+  ctx.roundRect(-4, -6, 8, 8, 2);
+  ctx.fillStyle = hexToRgba(boat.accentColor, 0.3);
+  ctx.fill();
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  // Accent stripe
+  ctx.beginPath();
+  ctx.moveTo(-6, 4);
+  ctx.lineTo(6, 4);
+  ctx.strokeStyle = boat.accentColor;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
 }
 
 /** Draw an organic wake behind the boat, scaled by speed */
