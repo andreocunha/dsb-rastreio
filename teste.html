@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Boat Tracker</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#0a1020;touch-action:none}
+  canvas{display:block;width:100%;height:100%}
+  .hud{
+    position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+    background:rgba(6,10,20,0.88);backdrop-filter:blur(10px);
+    border:1px solid rgba(0,180,255,0.18);border-radius:12px;
+    padding:8px 18px;display:flex;gap:20px;z-index:10;
+    font-family:'SF Mono','Fira Code','Courier New',monospace;color:#7fdbff;
+    font-size:12px;white-space:nowrap;
+  }
+  .hi{display:flex;flex-direction:column;align-items:center;gap:1px}
+  .hl{font-size:8px;text-transform:uppercase;letter-spacing:1.5px;opacity:.45}
+  .hv{font-size:13px;font-weight:700}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">
+  <div class="hi"><span class="hl">Lat</span><span class="hv" id="dLat">—</span></div>
+  <div class="hi"><span class="hl">Lon</span><span class="hv" id="dLon">—</span></div>
+  <div class="hi"><span class="hl">Vel</span><span class="hv" id="dSpd">—</span></div>
+  <div class="hi"><span class="hl">Hdg</span><span class="hv" id="dHdg">—</span></div>
+</div>
+<script>
+const cvs=document.getElementById('c'),ctx=cvs.getContext('2d');
+let W,H,dpr;
+function resize(){
+  dpr=devicePixelRatio||1;W=innerWidth;H=innerHeight;
+  cvs.width=W*dpr;cvs.height=H*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+resize();addEventListener('resize',resize);
+
+const TS=256,cache={},loading={};
+function lat2t(lat,z){const r=lat*Math.PI/180;return(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*(1<<z)}
+
+let zoom=17;
+const ZOOM_MIN=3,ZOOM_MAX=18;
+const startLat=-22.414654,startLon=-41.818751;
+
+let worldCX=(startLon+180)/360;
+let worldCY=(function(lat){const r=lat*Math.PI/180;return(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2})(startLat);
+
+function geo2world(lat,lon){
+  const r=lat*Math.PI/180;
+  return{x:(lon+180)/360,y:(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2};
+}
+function worldScale(){return Math.pow(2,zoom)*TS}
+function geo2scr(lat,lon){
+  const w=geo2world(lat,lon),s=worldScale();
+  return{x:(w.x-worldCX)*s+W/2,y:(w.y-worldCY)*s+H/2};
+}
+
+function loadTile(k,z,x,y){
+  if(cache[k]||loading[k])return;
+  loading[k]=true;
+  const img=new Image();img.crossOrigin='anonymous';
+  img.onload=()=>{cache[k]=img;delete loading[k]};
+  img.onerror=()=>{delete loading[k]};
+  img.src=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+}
+
+function findFallback(z,tx,ty){
+  for(let dz=1;dz<=5;dz++){
+    const pz=z-dz;if(pz<0)break;
+    const px=tx>>dz,py=ty>>dz;
+    const k=pz+'/'+px+'/'+py;
+    if(cache[k]){
+      const sub=1<<dz;
+      const sx=(((tx%sub)+sub)%sub),sy=(((ty%sub)+sub)%sub);
+      const ss=TS/sub;
+      return{img:cache[k],sx:sx*ss,sy:sy*ss,sw:ss,sh:ss};
+    }
+  }
+  return null;
+}
+
+let drag=false,dx0,dy0,followCam=true;
+cvs.addEventListener('pointerdown',e=>{drag=true;dx0=e.clientX;dy0=e.clientY;followCam=false;cvs.setPointerCapture(e.pointerId)});
+cvs.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const s=worldScale();
+  worldCX-=(e.clientX-dx0)/s;worldCY-=(e.clientY-dy0)/s;
+  dx0=e.clientX;dy0=e.clientY;
+});
+cvs.addEventListener('pointerup',()=>drag=false);
+cvs.addEventListener('pointercancel',()=>drag=false);
+cvs.addEventListener('dblclick',e=>{e.preventDefault();followCam=true});
+
+cvs.addEventListener('wheel',e=>{
+  e.preventDefault();
+  let d=e.deltaY;if(e.deltaMode===1)d*=40;
+  const step=-d*0.002;
+  const nz=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,zoom+step));
+  if(nz===zoom)return;
+  const mx=e.clientX,my=e.clientY,s0=worldScale();
+  const wmx=worldCX+(mx-W/2)/s0,wmy=worldCY+(my-H/2)/s0;
+  zoom=nz;
+  const s1=worldScale();
+  worldCX=wmx-(mx-W/2)/s1;worldCY=wmy-(my-H/2)/s1;
+},{passive:false});
+
+let lastPinch=0,pmx,pmy;
+cvs.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    const t=e.touches,dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;
+    lastPinch=Math.hypot(dx,dy);
+    pmx=(t[0].clientX+t[1].clientX)/2;pmy=(t[0].clientY+t[1].clientY)/2;
+    followCam=false;
+  }
+},{passive:true});
+cvs.addEventListener('touchmove',e=>{
+  if(e.touches.length===2&&lastPinch>0){
+    const t=e.touches,dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;
+    const d=Math.hypot(dx,dy),step=Math.log2(d/lastPinch);
+    const nz=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,zoom+step));
+    const mx=(t[0].clientX+t[1].clientX)/2,my=(t[0].clientY+t[1].clientY)/2;
+    const s0=worldScale(),wmx=worldCX+(mx-W/2)/s0,wmy=worldCY+(my-H/2)/s0;
+    zoom=nz;
+    const s1=worldScale();
+    worldCX=wmx-(mx-W/2)/s1;worldCY=wmy-(my-H/2)/s1;
+    worldCX-=(mx-pmx)/s1;worldCY-=(my-pmy)/s1;
+    lastPinch=d;pmx=mx;pmy=my;
+  }
+},{passive:true});
+cvs.addEventListener('touchend',()=>lastPinch=0);
+
+const route=[
+  [-22.414654,-41.818751],[-22.4140,-41.8172],[-22.4132,-41.8158],
+  [-22.4122,-41.8148],[-22.4110,-41.8144],[-22.4098,-41.8148],
+  [-22.4088,-41.8158],[-22.4082,-41.8172],[-22.4080,-41.8190],
+  [-22.4084,-41.8208],[-22.4094,-41.8222],[-22.4106,-41.8230],
+  [-22.4120,-41.8226],[-22.4132,-41.8216],[-22.4142,-41.8200],
+  [-22.414654,-41.818751],
+];
+
+let si=0,st=0,bLat=route[0][0],bLon=route[0][1],bHdg=0;
+const trail=[];
+
+function bearing(a,b){
+  const dL=(b[1]-a[1])*Math.PI/180,la=a[0]*Math.PI/180,lb=b[0]*Math.PI/180;
+  return((Math.atan2(Math.sin(dL)*Math.cos(lb),Math.cos(la)*Math.sin(lb)-Math.sin(la)*Math.cos(lb)*Math.cos(dL))*180/Math.PI)+360)%360;
+}
+
+function tick(){
+  const f=route[si%route.length],t=route[(si+1)%route.length];
+  st+=0.0015;
+  if(st>=1){st=0;si=(si+1)%route.length}
+  bLat=f[0]+(t[0]-f[0])*st;bLon=f[1]+(t[1]-f[1])*st;
+  bHdg=bearing(f,t);
+  trail.push([bLat,bLon]);if(trail.length>400)trail.shift();
+  document.getElementById('dLat').textContent=bLat.toFixed(5);
+  document.getElementById('dLon').textContent=bLon.toFixed(5);
+  document.getElementById('dHdg').textContent=bHdg.toFixed(0)+'°';
+  document.getElementById('dSpd').textContent=(8+Math.sin(Date.now()/3000)*2).toFixed(1)+' kn';
+  if(followCam){
+    const w=geo2world(bLat,bLon);
+    worldCX+=(w.x-worldCX)*0.04;worldCY+=(w.y-worldCY)*0.04;
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  const zi=Math.round(zoom),frac=Math.pow(2,zoom-zi),tds=TS*frac,mx=1<<zi;
+  const tcx=worldCX*mx,tcy=worldCY*mx;
+  const hw=W/2/tds,hh=H/2/tds;
+  const x0=Math.floor(tcx-hw)-1,x1=Math.ceil(tcx+hw)+1;
+  const y0=Math.floor(tcy-hh)-1,y1=Math.ceil(tcy+hh)+1;
+
+  for(let tx=x0;tx<=x1;tx++){
+    for(let ty=y0;ty<=y1;ty++){
+      if(ty<0||ty>=mx)continue;
+      const wx=((tx%mx)+mx)%mx,k=zi+'/'+wx+'/'+ty;
+      const sx=(tx-tcx)*tds+W/2,sy=(ty-tcy)*tds+H/2,ds=Math.ceil(tds)+1;
+      if(cache[k])ctx.drawImage(cache[k],sx,sy,ds,ds);
+      else{
+        const fb=findFallback(zi,wx,ty);
+        if(fb)ctx.drawImage(fb.img,fb.sx,fb.sy,fb.sw,fb.sh,sx,sy,ds,ds);
+        else{ctx.fillStyle='#0c1225';ctx.fillRect(sx,sy,ds,ds)}
+        loadTile(k,zi,wx,ty);
+      }
+    }
+  }
+
+  if(trail.length>1){
+    ctx.beginPath();
+    const p0=geo2scr(trail[0][0],trail[0][1]);ctx.moveTo(p0.x,p0.y);
+    for(let i=1;i<trail.length;i++){const p=geo2scr(trail[i][0],trail[i][1]);ctx.lineTo(p.x,p.y)}
+    ctx.strokeStyle='rgba(0,170,255,0.35)';ctx.lineWidth=2;ctx.stroke();
+  }
+
+  const bp=geo2scr(bLat,bLon);
+  ctx.save();ctx.translate(bp.x,bp.y);ctx.rotate(bHdg*Math.PI/180);
+  ctx.beginPath();ctx.ellipse(0,2,9,12,0,0,Math.PI*2);ctx.fillStyle='rgba(0,160,255,0.15)';ctx.fill();
+  ctx.beginPath();ctx.moveTo(0,-16);ctx.bezierCurveTo(6,-4,8,8,5,14);ctx.quadraticCurveTo(0,18,-5,14);ctx.bezierCurveTo(-8,8,-6,-4,0,-16);
+  ctx.fillStyle='#fff';ctx.strokeStyle='#0af';ctx.lineWidth=1.2;ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,2.5,0,Math.PI*2);ctx.fillStyle='#0af';ctx.fill();
+  ctx.restore();
+
+  requestAnimationFrame(render);
+}
+
+setInterval(tick,50);
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
