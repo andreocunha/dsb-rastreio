@@ -9,18 +9,7 @@ export interface InputCallbacks {
 
 const TAP_THRESHOLD = 6;
 
-/** Apply zoom centered on a screen point */
-function zoomAt(state: MapState, config: MapConfig, sx: number, sy: number, newZoom: number): void {
-  const s0 = worldScale(state.zoom, config.tileSize);
-  const wmx = state.worldCX + (sx - state.width / 2) / s0;
-  const wmy = state.worldCY + (sy - state.height / 2) / s0;
-  state.zoom = newZoom;
-  const s1 = worldScale(state.zoom, config.tileSize);
-  state.worldCX = wmx - (sx - state.width / 2) / s1;
-  state.worldCY = wmy - (sy - state.height / 2) / s1;
-}
-
-/** Attach all pointer/wheel/touch handlers to the canvas. Returns a cleanup function. */
+/** Attach all input handlers to the canvas. Returns a cleanup function. */
 export function attachInputHandlers(
   canvas: HTMLCanvasElement,
   state: MapState,
@@ -30,17 +19,25 @@ export function attachInputHandlers(
   const cleanups: Cleanup[] = [];
 
   function on<K extends keyof HTMLElementEventMap>(
-    el: HTMLCanvasElement,
+    el: HTMLCanvasElement | Window,
     evt: K,
     fn: (e: HTMLElementEventMap[K]) => void,
     opts?: AddEventListenerOptions,
   ) {
-    el.addEventListener(evt, fn, opts);
-    cleanups.push(() => el.removeEventListener(evt, fn, opts));
+    el.addEventListener(evt, fn as EventListener, opts);
+    cleanups.push(() => el.removeEventListener(evt, fn as EventListener, opts));
   }
 
-  // --- Pointer drag ---
+  // ─── Shared state ──────────────────────────────────────────────
+  let pinching = false;
+  let pinchDist = 0;
+  let pinchMidX = 0;
+  let pinchMidY = 0;
+  let pinchZoomStart = 0;
+
+  // ─── Pointer (single finger drag / mouse) ─────────────────────
   on(canvas, 'pointerdown', (e) => {
+    if (pinching) return;
     state.dragging = true;
     state.dragX = e.clientX;
     state.dragY = e.clientY;
@@ -50,7 +47,7 @@ export function attachInputHandlers(
   });
 
   on(canvas, 'pointermove', (e) => {
-    if (!state.dragging) return;
+    if (!state.dragging || pinching) return;
     const s = worldScale(state.zoom, config.tileSize);
     state.worldCX -= (e.clientX - state.dragX) / s;
     state.worldCY -= (e.clientY - state.dragY) / s;
@@ -59,6 +56,7 @@ export function attachInputHandlers(
   });
 
   on(canvas, 'pointerup', (e) => {
+    if (pinching) return;
     if (state.dragging) {
       const dx = e.clientX - state.dragStartX;
       const dy = e.clientY - state.dragStartY;
@@ -73,7 +71,7 @@ export function attachInputHandlers(
 
   on(canvas, 'pointercancel', () => { state.dragging = false; });
 
-  // --- Mouse wheel zoom ---
+  // ─── Mouse wheel zoom ─────────────────────────────────────────
   on(canvas, 'wheel', (e) => {
     e.preventDefault();
     let d = e.deltaY;
@@ -83,46 +81,64 @@ export function attachInputHandlers(
     zoomAt(state, config, e.clientX, e.clientY, nz);
   }, { passive: false });
 
-  // --- Pinch zoom ---
+  // ─── Touch (pinch zoom + two-finger pan) ──────────────────────
   on(canvas, 'touchstart', (e) => {
     if (e.touches.length === 2) {
-      const t = e.touches;
-      state.lastPinchDist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-      state.pinchMidX = (t[0].clientX + t[1].clientX) / 2;
-      state.pinchMidY = (t[0].clientY + t[1].clientY) / 2;
+      // Enter pinch mode — kill any active pointer drag
+      pinching = true;
+      state.dragging = false;
       state.followBoatId = null;
+
+      const t = e.touches;
+      pinchDist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      pinchMidX = (t[0].clientX + t[1].clientX) / 2;
+      pinchMidY = (t[0].clientY + t[1].clientY) / 2;
+      pinchZoomStart = state.zoom;
     }
   }, { passive: true });
 
   on(canvas, 'touchmove', (e) => {
-    if (e.touches.length !== 2 || state.lastPinchDist <= 0) return;
-    const t = e.touches;
-    const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const rawZoom = state.zoom + Math.log2(d / state.lastPinchDist);
-    const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, rawZoom));
+    if (!pinching || e.touches.length !== 2) return;
 
+    const t = e.touches;
+    const newDist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const mx = (t[0].clientX + t[1].clientX) / 2;
     const my = (t[0].clientY + t[1].clientY) / 2;
 
-    // Only apply zoom if it actually changed — prevents flicker at limits
+    // Zoom: compute from original pinch start (no accumulation drift)
+    const rawZoom = pinchZoomStart + Math.log2(newDist / pinchDist);
+    const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, rawZoom));
+
     if (nz !== state.zoom) {
       zoomAt(state, config, mx, my, nz);
     }
 
-    // Pan by pinch midpoint movement (always, even at zoom limit)
-    const s1 = worldScale(state.zoom, config.tileSize);
-    state.worldCX -= (mx - state.pinchMidX) / s1;
-    state.worldCY -= (my - state.pinchMidY) / s1;
-
-    // Only update pinch distance if zoom wasn't clamped — prevents accumulation
-    if (rawZoom >= config.zoomMin && rawZoom <= config.zoomMax) {
-      state.lastPinchDist = d;
-    }
-    state.pinchMidX = mx;
-    state.pinchMidY = my;
+    // Pan: move by midpoint delta
+    const s = worldScale(state.zoom, config.tileSize);
+    state.worldCX -= (mx - pinchMidX) / s;
+    state.worldCY -= (my - pinchMidY) / s;
+    pinchMidX = mx;
+    pinchMidY = my;
   }, { passive: true });
 
-  on(canvas, 'touchend', () => { state.lastPinchDist = 0; });
+  on(canvas, 'touchend', (e) => {
+    if (e.touches.length < 2) {
+      pinching = false;
+    }
+  });
+
+  on(canvas, 'touchcancel', () => { pinching = false; });
 
   return () => cleanups.forEach((fn) => fn());
+}
+
+/** Apply zoom centered on a screen point */
+function zoomAt(state: MapState, config: MapConfig, sx: number, sy: number, newZoom: number): void {
+  const s0 = worldScale(state.zoom, config.tileSize);
+  const wmx = state.worldCX + (sx - state.width / 2) / s0;
+  const wmy = state.worldCY + (sy - state.height / 2) / s0;
+  state.zoom = newZoom;
+  const s1 = worldScale(state.zoom, config.tileSize);
+  state.worldCX = wmx - (sx - state.width / 2) / s1;
+  state.worldCY = wmy - (sy - state.height / 2) / s1;
 }

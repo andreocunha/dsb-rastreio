@@ -81,9 +81,6 @@ export interface MapState {
   dragY: number;
   dragStartX: number;
   dragStartY: number;
-  lastPinchDist: number;
-  pinchMidX: number;
-  pinchMidY: number;
   followBoatId: string | null;
 
   // Boats
