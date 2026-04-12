@@ -202,11 +202,13 @@ function drawBoat(
     ctx.setLineDash([]);
   }
 
-  // Glow
-  ctx.beginPath();
-  ctx.ellipse(0, 1, 10, 14, 0, 0, Math.PI * 2);
-  ctx.fillStyle = hexToRgba(boat.accentColor, 0.12);
-  ctx.fill();
+  // Glow (skip for arrow type — too visible on simple shape)
+  if (boat.type !== 'arrow') {
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 10, 14, 0, 0, Math.PI * 2);
+    ctx.fillStyle = hexToRgba(boat.accentColor, 0.12);
+    ctx.fill();
+  }
 
   switch (boat.type) {
     case 'cat':     drawCatamaran(ctx, boat); break;
@@ -330,7 +332,6 @@ function drawArrow(ctx: CanvasRenderingContext2D, boat: Boat): void {
   ctx.fill();
   ctx.stroke();
 
-  // Center dot
   ctx.beginPath();
   ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
   ctx.fillStyle = boat.accentColor;
