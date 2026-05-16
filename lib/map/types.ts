@@ -64,7 +64,14 @@ export interface Boat {
   speedPhaseOffset: number;
   routeIndex: number;
   routeT: number;
-  trail: [number, number][];
+  /** Trail samples: [lat, lon, clientTimestampMs]. The timestamp lets the renderer break the line across data gaps. */
+  trail: [number, number, number][];
+  /**
+   * True when the boat's current position came from extrapolation (no fresh
+   * realtime data). The trail recorder skips pushes while stale so the
+   * recovery point has a real time gap relative to the last good point.
+   */
+  isStale: boolean;
 }
 
 export type EditTool = 'buoy' | 'finish' | 'maintenance' | 'route' | null;

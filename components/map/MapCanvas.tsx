@@ -4,8 +4,15 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { initEngine, type EngineAPI } from '@/lib/map/engine';
 import type { EditTool } from '@/lib/map/types';
 import { ROUTE_COLORS } from '@/lib/map/types';
+import { connectRealtime } from '@/lib/realtime/socket-client';
 import { HUD, type HUDHandle } from './HUD';
 import { BoatLabels, type BoatLabelsHandle } from './BoatLabels';
+
+const REALTIME_URL =
+  process.env.NEXT_PUBLIC_REALTIME_URL ??
+  (typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'ws://localhost:4001'
+    : null);
 
 const TOOLS: { id: Exclude<EditTool, null>; label: string; icon: React.ReactNode }[] = [
   {
@@ -83,7 +90,26 @@ export default function MapCanvas() {
     });
 
     engineRef.current = engine;
-    return () => engine.destroy();
+
+    let disconnect: (() => void) | null = null;
+    if (REALTIME_URL) {
+      disconnect = connectRealtime(
+        { url: REALTIME_URL },
+        {
+          onUpdates(updates) {
+            engine.ingestPositions(updates);
+          },
+          onStatus(status) {
+            console.log(`[realtime] ${status}`);
+          },
+        },
+      );
+    }
+
+    return () => {
+      disconnect?.();
+      engine.destroy();
+    };
   }, []);
 
   const selectTool = useCallback((tool: EditTool) => {

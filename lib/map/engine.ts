@@ -4,6 +4,13 @@ import { TileCache } from './tiles';
 import { renderFrame } from './renderer';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
+import { RealtimeSource } from '@/lib/realtime/source';
+import type { PositionUpdate } from '@/lib/realtime/types';
+
+// Below this segment speed (m/s) we keep the previous heading. GPS noise on a
+// near-stationary boat produces a meaningless bearing that would spin the icon.
+const MIN_SPEED_FOR_HEADING_MPS = 0.5;
+const MPS_TO_KNOTS = 1.943844;
 
 // Demo route (circular path)
 const DEMO_ROUTE: [number, number][] = [
@@ -60,6 +67,9 @@ export interface EngineAPI {
   undoRoutePoint: () => void;
   deleteRoute: (id: string) => void;
   clearAllRoutes: () => void;
+  /** Push real GPS samples in. First call switches the engine out of mock simulation. */
+  ingestPositions: (updates: PositionUpdate[]) => void;
+  getMode: () => 'simulation' | 'realtime';
   destroy: () => void;
 }
 
@@ -88,6 +98,7 @@ function createBoats(): Boat[] {
       routeIndex: startIdx,
       routeT: localT,
       trail: [],
+      isStale: false,
     };
   });
 }
@@ -130,6 +141,8 @@ export function initEngine(
   let buoyIdCounter = 0;
   let routeIdCounter = 0;
   const tiles = new TileCache(config);
+  const realtime = new RealtimeSource();
+  let mode: 'simulation' | 'realtime' = 'simulation';
 
   let rafId = 0;
   let running = true;
@@ -293,7 +306,15 @@ export function initEngine(
   let trailAccum = 0;
   const TRAIL_INTERVAL = 50; // add trail point every 50ms
 
-  function tickBoat(boat: Boat, dt: number) {
+  function dampHeading(boat: Boat, dt: number, factor: number) {
+    let diff = boat.headingTarget - boat.heading;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+    boat.heading += diff * Math.min(1, factor * (dt / TICK_RATE));
+    boat.heading = ((boat.heading % 360) + 360) % 360;
+  }
+
+  function tickBoatSim(boat: Boat, dt: number) {
     const now = Date.now();
     const speedVar = boat.baseSpeed + Math.sin(now / 3000 + boat.speedPhaseOffset) * 2;
     const advance = (0.0012 + (speedVar - 6) * 0.0002) * (dt / TICK_RATE);
@@ -309,13 +330,32 @@ export function initEngine(
     boat.lon = from[1] + (to[1] - from[1]) * boat.routeT;
 
     boat.headingTarget = bearing(from, to);
-    let diff = boat.headingTarget - boat.heading;
-    if (diff > 180) diff -= 360;
-    if (diff < -180) diff += 360;
-    boat.heading += diff * Math.min(1, 0.08 * (dt / TICK_RATE));
-    boat.heading = ((boat.heading % 360) + 360) % 360;
-
+    dampHeading(boat, dt, 0.08);
     boat.speed = speedVar;
+  }
+
+  function tickBoatRealtime(boat: Boat, dt: number) {
+    const sample = realtime.sampleBoat(boat.id);
+    if (sample) {
+      boat.lat = sample.lat;
+      boat.lon = sample.lon;
+      if (sample.bearing !== null && sample.speedMps >= MIN_SPEED_FOR_HEADING_MPS) {
+        boat.headingTarget = sample.bearing;
+      }
+      boat.speed = sample.speedMps * MPS_TO_KNOTS;
+      boat.isStale = sample.extrapolating;
+    } else {
+      // No data for this boat at all — treat as stale so the trail pauses.
+      boat.isStale = true;
+    }
+    // Heading damping runs every frame even without a fresh sample — keeps
+    // the visual smooth across the brief gaps between buffer segments.
+    dampHeading(boat, dt, 0.12);
+  }
+
+  function tickBoat(boat: Boat, dt: number) {
+    if (mode === 'realtime') tickBoatRealtime(boat, dt);
+    else tickBoatSim(boat, dt);
   }
 
   function tick(dt: number) {
@@ -327,8 +367,14 @@ export function initEngine(
     trailAccum += dt;
     if (trailAccum >= TRAIL_INTERVAL) {
       trailAccum -= TRAIL_INTERVAL;
+      const now = Date.now();
       for (const boat of state.boats) {
-        boat.trail.push([boat.lat, boat.lon]);
+        // Pause the trail while the boat's position is being extrapolated /
+        // frozen — this leaves a real time gap between the pre-outage last
+        // point and the post-outage resume point, which the renderer uses to
+        // skip the connecting line.
+        if (boat.isStale) continue;
+        boat.trail.push([boat.lat, boat.lon, now]);
         if (boat.trail.length > config.maxTrailLength) boat.trail.shift();
       }
     }
@@ -417,6 +463,11 @@ export function initEngine(
       if (state.activeRouteId === id) state.activeRouteId = null;
     },
     clearAllRoutes() { state.routes = []; state.activeRouteId = null; },
+    ingestPositions(updates: PositionUpdate[]) {
+      for (const u of updates) realtime.ingest(u);
+      if (mode === 'simulation' && realtime.hasAnyData()) mode = 'realtime';
+    },
+    getMode: () => mode,
     destroy() {
       running = false;
       cancelAnimationFrame(rafId);

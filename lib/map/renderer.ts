@@ -129,6 +129,11 @@ function renderTiles(
 }
 
 const MIN_TRAIL_SEG_PX = 2;
+// Any time gap above this between consecutive trail points (recorded every
+// ~50ms in normal operation) signals a render pause: tab in background, WS
+// reconnect, server outage. We render the trail on both sides but skip the
+// connecting line, otherwise the boat appears to fly across the map.
+const MAX_TRAIL_SEG_MS = 2000;
 
 function drawTrail(
   ctx: CanvasRenderingContext2D,
@@ -155,15 +160,24 @@ function drawTrail(
 
     ctx.beginPath();
     let prev = projectGeo(trail[start - 1][0], trail[start - 1][1], fp);
+    let prevT = trail[start - 1][2];
     for (let i = start; i < end; i++) {
       const cur = projectGeo(trail[i][0], trail[i][1], fp);
-      // Skip segments shorter than 2px — invisible anyway
+      const curT = trail[i][2];
+      if (curT - prevT > MAX_TRAIL_SEG_MS) {
+        // Data gap — don't connect across it.
+        prev = cur;
+        prevT = curT;
+        continue;
+      }
+      // Skip sub-pixel segments — invisible and noisy.
       const dx = cur.x - prev.x;
       const dy = cur.y - prev.y;
       if (dx * dx + dy * dy >= minDistSq || i === end - 1) {
         ctx.moveTo(prev.x, prev.y);
         ctx.lineTo(cur.x, cur.y);
         prev = cur;
+        prevT = curT;
       }
     }
     ctx.strokeStyle = `rgba(${rgb},${alpha})`;
@@ -406,14 +420,20 @@ function drawSupportBoat(ctx: CanvasRenderingContext2D, boat: Boat): void {
   ctx.stroke();
 }
 
-/** Draw an organic wake behind the boat, scaled by speed */
+/**
+ * Draw an organic wake behind the boat, scaled by speed (knots).
+ *
+ * Calibration: race boats run 0–13 knots (13 is the recorded competition max),
+ * jetskis go past 20. Intensity is normalized to 13 kn = 1.0 and allowed to
+ * overshoot up to 1.5 so jetski wakes look genuinely bigger than race boats.
+ */
 function drawWake(ctx: CanvasRenderingContext2D, speed: number): void {
-  const intensity = Math.max(0, Math.min(1, (speed - 2) / 10));
-  if (intensity < 0.01) return;
+  if (speed < 0.5) return; // ~stationary, no visible wake
+  const intensity = Math.min(speed / 13, 1.5);
 
   const now = Date.now();
-  const wakeLen = 25 + intensity * 45;
-  const spread = 4 + intensity * 10;
+  const wakeLen = 12 + intensity * 55;
+  const spread = 2.5 + intensity * 10;
 
   // Tapered foam shape — filled, fades out with gradient
   const grad = ctx.createLinearGradient(0, 14, 0, 14 + wakeLen);
