@@ -1,12 +1,13 @@
 'use client';
 
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { initEngine, type EngineAPI } from '@/lib/map/engine';
+import { initEngine, type EngineAPI, type PlayheadInfo } from '@/lib/map/engine';
 import type { EditTool } from '@/lib/map/types';
 import { ROUTE_COLORS } from '@/lib/map/types';
 import { connectRealtime } from '@/lib/realtime/socket-client';
 import { HUD, type HUDHandle } from './HUD';
 import { BoatLabels, type BoatLabelsHandle } from './BoatLabels';
+import { SeekBar } from './SeekBar';
 
 const REALTIME_URL =
   process.env.NEXT_PUBLIC_REALTIME_URL ??
@@ -69,6 +70,7 @@ export default function MapCanvas() {
   const engineRef = useRef<EngineAPI>(null);
   const [activeTool, setActiveTool] = useState<EditTool>(null);
   const [routeColor, setRouteColor] = useState(ROUTE_COLORS[0].hex);
+  const [playhead, setPlayhead] = useState<PlayheadInfo | null>(null);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -91,25 +93,32 @@ export default function MapCanvas() {
 
     engineRef.current = engine;
 
-    let disconnect: (() => void) | null = null;
+    const unsubPlayhead = engine.onPlayhead((info) => setPlayhead(info));
+
+    let socketDisconnect: (() => void) | null = null;
     if (REALTIME_URL) {
-      disconnect = connectRealtime(
+      const socket = connectRealtime(
         { url: REALTIME_URL },
         {
-          onUpdates(updates) {
-            engine.ingestPositions(updates);
-          },
-          onStatus(status) {
-            console.log(`[realtime] ${status}`);
-          },
+          onInit: (msg) => engine.ingestInit(msg),
+          onUpdates: (updates) => engine.ingestLive(updates),
+          onHistory: (msg) => engine.ingestHistory(msg),
+          onStatus: (status) => console.log(`[realtime] ${status}`),
         },
       );
+      engine.setHistoryRequester((from, to, reqId) => socket.requestHistory(from, to, reqId));
+      socketDisconnect = socket.disconnect;
     }
 
     return () => {
-      disconnect?.();
+      unsubPlayhead();
+      socketDisconnect?.();
       engine.destroy();
     };
+  }, []);
+
+  const handleSeek = useCallback((t: number | null) => {
+    engineRef.current?.setPlayhead(t);
   }, []);
 
   const selectTool = useCallback((tool: EditTool) => {
@@ -194,6 +203,10 @@ export default function MapCanvas() {
       )}
 
       <HUD ref={hudRef} />
+
+      {playhead && playhead.raceStartT > 0 && playhead.liveT > playhead.raceStartT && (
+        <SeekBar info={playhead} onSeek={handleSeek} />
+      )}
     </>
   );
 }

@@ -136,11 +136,75 @@ function applyOutlier(pos, distM) {
   };
 }
 
+// Per-boat full history, sorted ascending by t. Append-only.
+//   In a real deployment this would be persisted (e.g., Postgres); the
+//   simulator keeps it in process memory so seeking works during a session.
+const history = new Map(); // boatId → Array<{t, lat, lon}>
+for (const def of BOAT_DEFS) history.set(def.id, []);
+let raceStartT = 0; // ms; 0 = race hasn't started
+
+function pushHistory(update) {
+  history.get(update.id).push({ t: update.t, lat: update.lat, lon: update.lon });
+}
+
+// Binary-search a sample's first index with t >= target.
+function lowerBound(arr, t) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid].t < t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+function historySlice(boatId, fromT, toT) {
+  const arr = history.get(boatId);
+  if (!arr) return [];
+  const start = lowerBound(arr, fromT);
+  const end = lowerBound(arr, toT + 1);
+  const out = new Array(end - start);
+  for (let i = start; i < end; i++) out[i - start] = { id: boatId, ...arr[i] };
+  return out;
+}
+
 const wss = new WebSocketServer({ port: PORT });
 const clients = new Set();
+// Send the most recent ~30s on connect so the live smoother has enough data.
+const INIT_TAIL_MS = 30_000;
+
+function sendInit(ws) {
+  const now = Date.now();
+  const tail = [];
+  for (const id of history.keys()) {
+    for (const s of historySlice(id, now - INIT_TAIL_MS, now)) tail.push(s);
+  }
+  ws.send(JSON.stringify({ type: 'init', raceStartT, serverT: now, tail }));
+}
+
+function handleGetHistory(ws, msg) {
+  if (!Number.isFinite(msg.from) || !Number.isFinite(msg.to)) return;
+  const samples = [];
+  for (const id of history.keys()) {
+    for (const s of historySlice(id, msg.from, msg.to)) samples.push(s);
+  }
+  ws.send(JSON.stringify({
+    type: 'history',
+    reqId: msg.reqId ?? null,
+    from: msg.from,
+    to: msg.to,
+    samples,
+  }));
+}
 
 wss.on('connection', (ws) => {
   clients.add(ws);
+  sendInit(ws);
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg && msg.type === 'getHistory') handleGetHistory(ws, msg);
+  });
   ws.on('close', () => clients.delete(ws));
   ws.on('error', () => clients.delete(ws));
 });
@@ -163,9 +227,12 @@ function scheduleBroadcast() {
 
 function broadcast() {
   scheduleBroadcast();
-  if (DROP_PROB > 0 && Math.random() < DROP_PROB) return;
   const t = Date.now();
-  const updates = boats.map((b) => {
+  if (raceStartT === 0) raceStartT = t;
+  // Record samples to history every tick, regardless of drop simulation — we
+  // simulate network loss, not GPS loss. The boats kept telemetering, the
+  // client just didn't receive it.
+  const samples = boats.map((b) => {
     const pos = currentPosition(b);
     let noisy = applyNoise(pos, NOISE_M);
     if (OUTLIER_PROB > 0 && Math.random() < OUTLIER_PROB) {
@@ -173,7 +240,9 @@ function broadcast() {
     }
     return { id: b.id, lat: noisy.lat, lon: noisy.lon, t };
   });
-  const msg = JSON.stringify({ type: 'positions', updates });
+  for (const s of samples) pushHistory(s);
+  if (DROP_PROB > 0 && Math.random() < DROP_PROB) return;
+  const msg = JSON.stringify({ type: 'positions', updates: samples });
   for (const ws of clients) {
     if (ws.readyState === ws.OPEN) ws.send(msg);
   }

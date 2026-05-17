@@ -8,37 +8,23 @@ interface Sample {
 }
 
 export interface BufferConfig {
-  /** Maximum samples kept per boat (older are discarded). */
-  capacity: number;
-  /** Max plausible boat speed in m/s, used for outlier gate. ~25 m/s ≈ 50 knots. */
+  /** Max plausible boat speed in m/s, used for outlier gate on the live stream. */
   maxSpeedMps: number;
-  /** After this many consecutive rejected samples, force-accept the next one (handles legitimate teleport / reconnect). */
+  /** After this many consecutive rejected live samples, force-accept the next one. */
   forceAcceptAfter: number;
   /** Max time (ms) the sampler will extrapolate beyond the latest sample before freezing. */
   maxExtrapMs: number;
-  /**
-   * If an incoming sample's timestamp is this far ahead of the latest accepted
-   * sample, treat it as the start of a fresh connection: drop accumulated
-   * history and re-seed the buffer from this point. Prevents a multi-second
-   * "warp slide" interpolation across server restarts, network outages, or
-   * tab-throttling pauses.
-   */
+  /** If a live sample lands this far ahead of the previous live sample, treat as fresh-start. */
   resetGapMs: number;
-  /** Baseline window for heading/speed derivation. Longer = more noise rejection but slower to react to real turns. */
+  /** Baseline window for heading/speed derivation. */
   headingLookbackMs: number;
   /** Min displacement (meters) across the lookback window for the derived bearing to be trusted. */
   headingMinDistM: number;
-  /**
-   * Gaussian smoothing sigma (ms) applied to the position output. Set to 0 for
-   * pure linear interpolation. With 1Hz samples and 1–2 m of GPS noise on
-   * slow-moving boats (2–3 m/s), 800 ms smooths the noise into a soft drift
-   * instead of a visible zigzag between adjacent samples.
-   */
+  /** Gaussian smoothing sigma (ms) applied to position output. 0 = pure linear interp. */
   positionSmoothingMs: number;
 }
 
 export const DEFAULT_BUFFER_CONFIG: BufferConfig = {
-  capacity: 16,
   maxSpeedMps: 25,
   forceAcceptAfter: 3,
   maxExtrapMs: 2500,
@@ -57,15 +43,17 @@ function distMeters(a: { lat: number; lon: number }, b: { lat: number; lon: numb
 }
 
 /**
- * Ring buffer of GPS samples for one boat plus the sampler that produces a
- * smooth (lat, lon, bearing, speed) reading for any past server time.
+ * Append-only, time-sorted sample store for one boat plus a smoothing sampler.
  *
- * Outlier rejection runs at ingest time. The sampler does linear interpolation
- * between consecutive accepted samples, with bounded extrapolation when the
- * caller asks for a time slightly past the latest known sample (covers small
- * network gaps without freezing the boat).
+ * Live samples enter via `pushLive` and go through the outlier / gap-reset
+ * filter. Backfilled historical chunks enter via `mergeRange` and are trusted
+ * (no filtering, inserted at the correct sorted position). The sampler is
+ * agnostic to where samples came from — given any server time it returns an
+ * interpolated, Gaussian-smoothed reading, restricting the kernel to a small
+ * window via binary search so the cost stays O(log N + K) where K is the
+ * number of samples inside ±3σ (~5–6 for our 1 Hz feed).
  */
-export class BoatBuffer {
+export class BoatHistory {
   private samples: Sample[] = [];
   private rejectStreak = 0;
   private readonly cfg: BufferConfig;
@@ -74,18 +62,51 @@ export class BoatBuffer {
     this.cfg = cfg;
   }
 
-  /** Ingest a raw sample. Returns true if accepted, false if rejected as outlier. */
-  push(sample: Sample): boolean {
+  hasData(): boolean {
+    return this.samples.length > 0;
+  }
+
+  latestT(): number {
+    const last = this.samples[this.samples.length - 1];
+    return last ? last.t : 0;
+  }
+
+  firstT(): number {
+    return this.samples[0]?.t ?? 0;
+  }
+
+  /** First index whose t >= target. */
+  private lowerBound(t: number): number {
+    let lo = 0;
+    let hi = this.samples.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.samples[mid].t < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * Live-stream ingest with outlier / gap protection. Assumes the new sample
+   * is at or near the latest known time (monotonic). Returns true if accepted.
+   */
+  pushLive(sample: Sample): boolean {
     if (!Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.t)) {
       return false;
     }
-    const last = this.samples[this.samples.length - 1];
+    const n = this.samples.length;
+    const last = n > 0 ? this.samples[n - 1] : null;
     if (last) {
-      if (sample.t <= last.t) return false;
+      if (sample.t <= last.t) {
+        // Out-of-order or duplicate live sample — drop. (Backfill goes through mergeRange.)
+        return false;
+      }
       const dtMs = sample.t - last.t;
       if (dtMs > this.cfg.resetGapMs) {
-        // Long data gap — discard stale history so we don't interpolate across it.
-        this.samples = [];
+        // Long gap — we kept the older samples for DVR seeking, but the smoother
+        // should not interpolate across the gap. We rely on the renderT cursor
+        // being inside one regime at a time; no need to drop history.
+        this.rejectStreak = 0;
       } else {
         const v = distMeters(last, sample) / Math.max(dtMs / 1000, 0.001);
         const isOutlier = v > this.cfg.maxSpeedMps;
@@ -93,53 +114,72 @@ export class BoatBuffer {
           this.rejectStreak++;
           return false;
         }
-        if (isOutlier) {
-          // Force-accept: drop pre-jump history so the smoother doesn't span the
-          // synthetic high-speed segment.
-          this.samples = [last];
-        }
+        this.rejectStreak = 0;
       }
     }
-    this.rejectStreak = 0;
     this.samples.push(sample);
-    if (this.samples.length > this.cfg.capacity) this.samples.shift();
     return true;
   }
 
-  /** Latest accepted server timestamp, or 0 if empty. */
-  latestT(): number {
-    const last = this.samples[this.samples.length - 1];
-    return last ? last.t : 0;
-  }
-
-  hasData(): boolean {
-    return this.samples.length > 0;
+  /**
+   * Bulk-merge a sorted-by-t batch of samples into the history. Used for
+   * backfilled history chunks from the server. Inserts at the correct sorted
+   * position via binary search and skips duplicates by exact `t` match.
+   */
+  mergeRange(samples: Sample[]): void {
+    if (samples.length === 0) return;
+    if (this.samples.length === 0) {
+      this.samples = samples.slice();
+      return;
+    }
+    // Common case: whole batch lands strictly before the first existing sample
+    // (typical user-seeks-into-past pattern). Prepend in one shot.
+    if (samples[samples.length - 1].t < this.samples[0].t) {
+      this.samples = samples.concat(this.samples);
+      return;
+    }
+    // Generic case: walk-and-merge via two-pointer scan.
+    const merged: Sample[] = [];
+    let i = 0;
+    let j = 0;
+    const a = this.samples;
+    const b = samples;
+    while (i < a.length && j < b.length) {
+      if (a[i].t < b[j].t) {
+        merged.push(a[i++]);
+      } else if (a[i].t > b[j].t) {
+        merged.push(b[j++]);
+      } else {
+        // Same timestamp — prefer existing (live) value.
+        merged.push(a[i++]);
+        j++;
+      }
+    }
+    while (i < a.length) merged.push(a[i++]);
+    while (j < b.length) merged.push(b[j++]);
+    this.samples = merged;
   }
 
   /**
-   * Pure position interpolation at the given server time — no bearing here.
-   *
-   * Inside the buffer's time range, applies a Gaussian-weighted average of
-   * nearby samples (kernel smoother) to suppress per-sample GPS noise. The
-   * standard deviation of the kernel is `positionSmoothingMs`; with samples at
-   * ~1 Hz and σ ≈ 800 ms, ~3 samples carry meaningful weight, giving roughly a
-   * √3 noise reduction at the cost of softening sub-second motion features.
-   *
-   * Outside the buffer range, falls back to clamp (before) or capped linear
-   * extrapolation (after) — same behavior as before.
+   * Return all samples whose t falls within [fromT, toT] inclusive. Used by
+   * the engine to derive the trail when scrubbing.
    */
+  rangeSlice(fromT: number, toT: number): Sample[] {
+    const start = this.lowerBound(fromT);
+    const end = this.lowerBound(toT + 1);
+    return this.samples.slice(start, end);
+  }
+
   private interpolatePosAt(serverT: number): { lat: number; lon: number; extrapolating: boolean } | null {
     const n = this.samples.length;
     if (n === 0) return null;
     if (n === 1) {
-      // Warmup — single sample, no interp possible.
       const s = this.samples[0];
       return { lat: s.lat, lon: s.lon, extrapolating: true };
     }
     const first = this.samples[0];
     const last = this.samples[n - 1];
     if (serverT <= first.t) {
-      // Clamped before the buffer starts — synthesizing position, not interpolating.
       return { lat: first.lat, lon: first.lon, extrapolating: true };
     }
     if (serverT >= last.t) {
@@ -155,11 +195,8 @@ export class BoatBuffer {
     }
     const sigma = this.cfg.positionSmoothingMs;
     if (sigma <= 0) {
-      // Linear interpolation fallback (no smoothing).
-      let aIdx = 0;
-      for (let i = n - 2; i >= 0; i--) {
-        if (this.samples[i].t <= serverT) { aIdx = i; break; }
-      }
+      // Linear fallback. Binary search for the bracket.
+      const aIdx = this.lowerBound(serverT) - 1;
       const a = this.samples[aIdx];
       const b = this.samples[aIdx + 1];
       const span = b.t - a.t;
@@ -170,24 +207,25 @@ export class BoatBuffer {
         extrapolating: false,
       };
     }
+    // Gaussian-weighted smoothing over the ±3σ window. Binary search for the
+    // window start so the cost stays bounded regardless of total history size.
     const sigma2 = sigma * sigma;
     const cutoff = sigma * 3;
+    const startIdx = this.lowerBound(serverT - cutoff);
     let wSum = 0;
     let latSum = 0;
     let lonSum = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = startIdx; i < n; i++) {
       const s = this.samples[i];
       const dt = s.t - serverT;
-      if (dt < -cutoff || dt > cutoff) continue;
+      if (dt > cutoff) break;
       const w = Math.exp(-(dt * dt) / (2 * sigma2));
       wSum += w;
       latSum += w * s.lat;
       lonSum += w * s.lon;
     }
     if (wSum === 0) {
-      // Shouldn't happen: serverT lies between first.t and last.t, so at least
-      // one sample falls inside ±3σ of any reasonable σ.
-      return { lat: first.lat, lon: first.lon, extrapolating: false };
+      return { lat: first.lat, lon: first.lon, extrapolating: true };
     }
     return {
       lat: latSum / wSum,
@@ -196,22 +234,10 @@ export class BoatBuffer {
     };
   }
 
-  /**
-   * Produce an interpolated reading at the given server time. Returns null if
-   * the buffer is empty.
-   *
-   * Position uses linear interpolation between bracketing samples, with bounded
-   * extrapolation past the latest sample.
-   *
-   * Bearing/speed are derived from a *long baseline* — the interpolated
-   * position at `serverT - headingLookbackMs` to the position at `serverT`.
-   * Over ~16 m of motion the heading is stable against per-sample GPS noise,
-   * removing the per-second swing you'd get from raw segment-to-segment bearings.
-   */
+  /** See header comment for the smoothing scheme. */
   sampleAt(serverT: number): InterpSample | null {
     const here = this.interpolatePosAt(serverT);
     if (!here) return null;
-
     const back = this.interpolatePosAt(serverT - this.cfg.headingLookbackMs);
     let bearingDeg: number | null = null;
     let speedMps = 0;

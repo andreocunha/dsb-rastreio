@@ -1,7 +1,9 @@
-import type { ServerMessage, PositionUpdate } from './types';
+import type { ServerMessage, PositionUpdate, InitMessage, HistoryMessage } from './types';
 
 export interface SocketClientCallbacks {
+  onInit?: (msg: InitMessage) => void;
   onUpdates?: (updates: PositionUpdate[]) => void;
+  onHistory?: (msg: HistoryMessage) => void;
   onStatus?: (status: 'connecting' | 'open' | 'closed' | 'error') => void;
 }
 
@@ -11,12 +13,18 @@ export interface SocketClientOptions {
   reconnectMaxMs?: number;
 }
 
+export interface SocketClient {
+  disconnect: () => void;
+  /** Send a getHistory request. No-op if the socket isn't open. */
+  requestHistory: (from: number, to: number, reqId: string) => void;
+}
+
 /**
- * Thin WebSocket wrapper with exponential-backoff reconnect. Parses
- * `positions` messages and hands updates to the caller; everything else
- * (interpolation, outlier filter) lives in RealtimeSource.
+ * Thin WebSocket wrapper with exponential-backoff reconnect. Parses server
+ * messages and routes them to typed callbacks; everything else (history
+ * merging, coverage tracking) is RealtimeSource's job.
  */
-export function connectRealtime(opts: SocketClientOptions, cb: SocketClientCallbacks): () => void {
+export function connectRealtime(opts: SocketClientOptions, cb: SocketClientCallbacks): SocketClient {
   const reconnectMin = opts.reconnectMinMs ?? 500;
   const reconnectMax = opts.reconnectMaxMs ?? 8000;
   let ws: WebSocket | null = null;
@@ -40,9 +48,9 @@ export function connectRealtime(opts: SocketClientOptions, cb: SocketClientCallb
       } catch {
         return;
       }
-      if (msg.type === 'positions' && Array.isArray(msg.updates)) {
-        cb.onUpdates?.(msg.updates);
-      }
+      if (msg.type === 'init') cb.onInit?.(msg);
+      else if (msg.type === 'positions' && Array.isArray(msg.updates)) cb.onUpdates?.(msg.updates);
+      else if (msg.type === 'history') cb.onHistory?.(msg);
     };
     ws.onerror = () => cb.onStatus?.('error');
     ws.onclose = () => {
@@ -56,10 +64,17 @@ export function connectRealtime(opts: SocketClientOptions, cb: SocketClientCallb
 
   open();
 
-  return () => {
-    closed = true;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
-    ws = null;
+  return {
+    disconnect() {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      ws = null;
+    },
+    requestHistory(from, to, reqId) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getHistory', reqId, from, to }));
+      }
+    },
   };
 }

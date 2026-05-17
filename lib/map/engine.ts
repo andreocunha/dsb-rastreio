@@ -4,8 +4,8 @@ import { TileCache } from './tiles';
 import { renderFrame } from './renderer';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
-import { RealtimeSource } from '@/lib/realtime/source';
-import type { PositionUpdate } from '@/lib/realtime/types';
+import { RealtimeSource, type HistoryRequester } from '@/lib/realtime/source';
+import type { PositionUpdate, InitMessage, HistoryMessage } from '@/lib/realtime/types';
 
 // Below this segment speed (m/s) we keep the previous heading. GPS noise on a
 // near-stationary boat produces a meaningless bearing that would spin the icon.
@@ -56,6 +56,23 @@ export interface EngineCallbacks {
   onBoatPositions?: (boats: BoatScreenInfo[]) => void;
 }
 
+export interface PlayheadInfo {
+  /** True when playhead tracks live (latest data minus the interp delay). */
+  isLive: boolean;
+  /** Current playhead server time. */
+  playheadT: number;
+  /** Server time of the first sample of the race. 0 = race hasn't started. */
+  raceStartT: number;
+  /** Server time of the latest live sample we've seen. */
+  liveT: number;
+  /** True while a history chunk request is outstanding. */
+  isLoading: boolean;
+  /** True if playhead currently has data; false during loading after a seek into uncovered range. */
+  hasDataAtPlayhead: boolean;
+}
+
+export type PlayheadListener = (info: PlayheadInfo) => void;
+
 export interface EngineAPI {
   addBuoy: (lat: number, lon: number) => Buoy;
   removeBuoy: (id: string) => void;
@@ -67,8 +84,20 @@ export interface EngineAPI {
   undoRoutePoint: () => void;
   deleteRoute: (id: string) => void;
   clearAllRoutes: () => void;
-  /** Push real GPS samples in. First call switches the engine out of mock simulation. */
-  ingestPositions: (updates: PositionUpdate[]) => void;
+
+  // Realtime stream wiring
+  setHistoryRequester: (fn: HistoryRequester | null) => void;
+  ingestInit: (msg: InitMessage) => void;
+  ingestLive: (updates: PositionUpdate[]) => void;
+  ingestHistory: (msg: HistoryMessage) => void;
+
+  // DVR controls
+  /** Seek to a specific server time, or pass null to return to live. */
+  setPlayhead: (serverT: number | null) => void;
+  getPlayheadInfo: () => PlayheadInfo;
+  /** Subscribe to playhead/loading changes. Returns unsubscribe. */
+  onPlayhead: (fn: PlayheadListener) => () => void;
+
   getMode: () => 'simulation' | 'realtime';
   destroy: () => void;
 }
@@ -143,6 +172,42 @@ export function initEngine(
   const tiles = new TileCache(config);
   const realtime = new RealtimeSource();
   let mode: 'simulation' | 'realtime' = 'simulation';
+
+  // DVR state
+  // - playheadServerT === null  → live mode, playhead = realtime.liveRenderT()
+  // - playheadServerT !== null  → DVR; advances at real-time rate each frame
+  //   until it catches up to liveRenderT, at which point we drop back to null.
+  let playheadServerT: number | null = null;
+  let prevPlayheadT = 0;
+  let prevHasData = false;
+  const playheadListeners = new Set<PlayheadListener>();
+  let lastEmittedSig = '';
+
+  function currentPlayheadT(): number {
+    return playheadServerT ?? realtime.liveRenderT();
+  }
+
+  function getPlayheadInfo(): PlayheadInfo {
+    const playheadT = currentPlayheadT();
+    return {
+      isLive: playheadServerT === null,
+      playheadT,
+      raceStartT: realtime.raceStartT(),
+      liveT: realtime.liveRenderT(),
+      isLoading: realtime.isLoading(),
+      hasDataAtPlayhead: realtime.hasDataAt(playheadT),
+    };
+  }
+
+  function emitPlayheadIfChanged() {
+    if (playheadListeners.size === 0) return;
+    const info = getPlayheadInfo();
+    // Cheap signature to avoid spamming listeners with identical info.
+    const sig = `${info.isLive ? 1 : 0}|${Math.floor(info.playheadT / 250)}|${info.isLoading ? 1 : 0}|${info.hasDataAtPlayhead ? 1 : 0}|${Math.floor(info.liveT / 250)}|${info.raceStartT}`;
+    if (sig === lastEmittedSig) return;
+    lastEmittedSig = sig;
+    for (const l of playheadListeners) l(info);
+  }
 
   let rafId = 0;
   let running = true;
@@ -334,8 +399,8 @@ export function initEngine(
     boat.speed = speedVar;
   }
 
-  function tickBoatRealtime(boat: Boat, dt: number) {
-    const sample = realtime.sampleBoat(boat.id);
+  function tickBoatRealtime(boat: Boat, dt: number, playheadT: number) {
+    const sample = realtime.sampleBoatAt(boat.id, playheadT);
     if (sample) {
       boat.lat = sample.lat;
       boat.lon = sample.lon;
@@ -348,33 +413,51 @@ export function initEngine(
       // No data for this boat at all — treat as stale so the trail pauses.
       boat.isStale = true;
     }
-    // Heading damping runs every frame even without a fresh sample — keeps
-    // the visual smooth across the brief gaps between buffer segments.
     dampHeading(boat, dt, 0.12);
   }
 
-  function tickBoat(boat: Boat, dt: number) {
-    if (mode === 'realtime') tickBoatRealtime(boat, dt);
+  function tickBoat(boat: Boat, dt: number, playheadT: number) {
+    if (mode === 'realtime') tickBoatRealtime(boat, dt, playheadT);
     else tickBoatSim(boat, dt);
   }
 
-  function tick(dt: number) {
+  /**
+   * Rebuild each boat's trail from history. Used after a large playhead jump
+   * (user scrubbed). Samples every TRAIL_INTERVAL ms going back from playheadT.
+   * Stale/null samples are skipped, naturally leaving time gaps that the
+   * renderer renders as broken trail segments.
+   */
+  function regenerateTrails(playheadT: number) {
+    const N = config.maxTrailLength;
     for (const boat of state.boats) {
-      tickBoat(boat, dt);
+      boat.trail.length = 0;
+      // Walk forward in time so the array stays sorted by t.
+      for (let i = N - 1; i >= 0; i--) {
+        const t = playheadT - i * TRAIL_INTERVAL;
+        const s = realtime.sampleBoatAt(boat.id, t);
+        if (!s || s.extrapolating) continue;
+        boat.trail.push([s.lat, s.lon, t]);
+      }
+      // The boat's currently-displayed position is sampled at playheadT in
+      // tickBoatRealtime — the last regen point above already covers that.
+    }
+  }
+
+  function tick(dt: number, playheadT: number) {
+    for (const boat of state.boats) {
+      tickBoat(boat, dt, playheadT);
     }
 
-    // Trail points at fixed interval (not every frame)
+    // Trail points at fixed interval — record the current boat position with
+    // the *playhead* timestamp so the time axis is consistent across live and
+    // DVR, and the renderer's gap-detection works either way.
     trailAccum += dt;
     if (trailAccum >= TRAIL_INTERVAL) {
       trailAccum -= TRAIL_INTERVAL;
-      const now = Date.now();
+      const stampT = mode === 'realtime' ? playheadT : Date.now();
       for (const boat of state.boats) {
-        // Pause the trail while the boat's position is being extrapolated /
-        // frozen — this leaves a real time gap between the pre-outage last
-        // point and the post-outage resume point, which the renderer uses to
-        // skip the connecting line.
         if (boat.isStale) continue;
-        boat.trail.push([boat.lat, boat.lon, now]);
+        boat.trail.push([boat.lat, boat.lon, stampT]);
         if (boat.trail.length > config.maxTrailLength) boat.trail.shift();
       }
     }
@@ -407,7 +490,35 @@ export function initEngine(
     const dt = lastTime ? Math.min(time - lastTime, 100) : 16; // cap at 100ms
     lastTime = time;
 
-    tick(dt);
+    // Advance DVR playhead at real-time rate. When it catches up to live, drop
+    // back to live mode (so the LIVE button isn't needed if you let it run).
+    if (playheadServerT !== null) {
+      playheadServerT += dt;
+      const liveT = realtime.liveRenderT();
+      if (playheadServerT >= liveT - 200) {
+        playheadServerT = null;
+      }
+    }
+
+    const playheadT = currentPlayheadT();
+
+    const hasData = realtime.hasDataAt(playheadT);
+    // Regenerate trails on a significant playhead jump (user seeked) AND on
+    // the false→true data-availability transition (chunk just arrived after
+    // a seek into uncovered range, so the first regen had nothing to draw).
+    if (mode === 'realtime') {
+      const jumped = Math.abs(playheadT - prevPlayheadT) > 200;
+      const dataJustArrived = hasData && !prevHasData;
+      if (jumped || dataJustArrived) regenerateTrails(playheadT);
+    }
+    prevPlayheadT = playheadT;
+    prevHasData = hasData;
+
+    // Cheap: only sends requests for genuine gaps within prefetch window.
+    if (mode === 'realtime') realtime.ensureCoverage(playheadT);
+
+    tick(dt, playheadT);
+    emitPlayheadIfChanged();
     renderFrame(ctx, state, config, tiles);
 
     // Emit boat screen positions for DOM labels
@@ -463,9 +574,39 @@ export function initEngine(
       if (state.activeRouteId === id) state.activeRouteId = null;
     },
     clearAllRoutes() { state.routes = []; state.activeRouteId = null; },
-    ingestPositions(updates: PositionUpdate[]) {
-      for (const u of updates) realtime.ingest(u);
-      if (mode === 'simulation' && realtime.hasAnyData()) mode = 'realtime';
+
+    setHistoryRequester(fn) {
+      realtime.setRequester(fn);
+    },
+    ingestInit(msg) {
+      realtime.ingestInit(msg);
+      if (mode === 'simulation' && realtime.latestLiveT() > 0) mode = 'realtime';
+    },
+    ingestLive(updates) {
+      realtime.ingestLive(updates);
+      if (mode === 'simulation' && realtime.latestLiveT() > 0) mode = 'realtime';
+    },
+    ingestHistory(msg) {
+      realtime.ingestHistory(msg);
+    },
+    setPlayhead(serverT) {
+      if (serverT === null) {
+        playheadServerT = null;
+      } else {
+        const live = realtime.liveRenderT();
+        const start = realtime.raceStartT();
+        // Clamp to [raceStart, live].
+        const clamped = Math.min(live, start > 0 ? Math.max(start, serverT) : serverT);
+        playheadServerT = clamped;
+      }
+      emitPlayheadIfChanged();
+    },
+    getPlayheadInfo,
+    onPlayhead(fn) {
+      playheadListeners.add(fn);
+      // Fire once immediately so subscribers get current state.
+      fn(getPlayheadInfo());
+      return () => { playheadListeners.delete(fn); };
     },
     getMode: () => mode,
     destroy() {
