@@ -5,6 +5,9 @@ type Cleanup = () => void;
 
 export interface InputCallbacks {
   onTap?: (screenX: number, screenY: number) => void;
+  onEditStart?: (screenX: number, screenY: number) => boolean;
+  onEditMove?: (screenX: number, screenY: number) => void;
+  onEditEnd?: (cancelled: boolean) => void;
 }
 
 const TAP_THRESHOLD = 6;
@@ -34,10 +37,19 @@ export function attachInputHandlers(
   let pinchMidX = 0;
   let pinchMidY = 0;
   let pinchZoomStart = 0;
+  let editingPoint = false;
+  let moved = false;
+  function cancelEdit() {
+    if (editingPoint) callbacks.onEditEnd?.(true);
+    editingPoint = false;
+    state.dragging = false;
+  }
 
   // ─── Pointer (single finger drag / mouse) ─────────────────────
   on(canvas, 'pointerdown', (e) => {
-    if (pinching) return;
+    if (pinching || e.button !== 0 || e.isPrimary === false) return;
+    editingPoint = callbacks.onEditStart?.(e.clientX, e.clientY) ?? false;
+    moved = false;
     state.dragging = true;
     state.dragX = e.clientX;
     state.dragY = e.clientY;
@@ -47,7 +59,13 @@ export function attachInputHandlers(
   });
 
   on(canvas, 'pointermove', (e) => {
-    if (!state.dragging || pinching) return;
+    if (!state.dragging || pinching || e.isPrimary === false) return;
+    if (Math.hypot(e.clientX - state.dragStartX, e.clientY - state.dragStartY) > TAP_THRESHOLD) moved = true;
+    if (moved) state.followBoatId = null;
+    if (editingPoint) {
+      if (moved) callbacks.onEditMove?.(e.clientX, e.clientY);
+      return;
+    }
     const s = worldScale(state.zoom, config.tileSize);
     state.worldCX -= (e.clientX - state.dragX) / s;
     state.worldCY -= (e.clientY - state.dragY) / s;
@@ -56,11 +74,11 @@ export function attachInputHandlers(
   });
 
   on(canvas, 'pointerup', (e) => {
-    if (pinching) return;
+    if (pinching || e.isPrimary === false) return;
     if (state.dragging) {
-      const dx = e.clientX - state.dragStartX;
-      const dy = e.clientY - state.dragStartY;
-      if (Math.hypot(dx, dy) < TAP_THRESHOLD) {
+      if (editingPoint) callbacks.onEditEnd?.(!moved);
+      editingPoint = false;
+      if (!moved) {
         callbacks.onTap?.(e.clientX, e.clientY);
       } else {
         state.followBoatId = null;
@@ -69,11 +87,12 @@ export function attachInputHandlers(
     state.dragging = false;
   });
 
-  on(canvas, 'pointercancel', () => { state.dragging = false; });
+  on(canvas, 'pointercancel', cancelEdit);
 
   // ─── Mouse wheel zoom ─────────────────────────────────────────
   on(canvas, 'wheel', (e) => {
     e.preventDefault();
+    cancelEdit();
     let d = e.deltaY;
     if (e.deltaMode === 1) d *= 40;
     const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, state.zoom - d * 0.002));
@@ -86,7 +105,7 @@ export function attachInputHandlers(
     if (e.touches.length === 2) {
       // Enter pinch mode — kill any active pointer drag
       pinching = true;
-      state.dragging = false;
+      cancelEdit();
       state.followBoatId = null;
 
       const t = e.touches;
@@ -106,7 +125,7 @@ export function attachInputHandlers(
     const my = (t[0].clientY + t[1].clientY) / 2;
 
     // Zoom: compute from original pinch start (no accumulation drift)
-    const rawZoom = pinchZoomStart + Math.log2(newDist / pinchDist);
+    const rawZoom = pinchZoomStart + Math.log2(Math.max(1, newDist) / Math.max(1, pinchDist));
     const nz = Math.max(config.zoomMin, Math.min(config.zoomMax, rawZoom));
 
     if (nz !== state.zoom) {

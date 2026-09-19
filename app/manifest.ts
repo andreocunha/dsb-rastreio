@@ -2,13 +2,13 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'DSB Rastreio',
-    short_name: 'DSB Rastreio',
+    name: 'DSB Solar Race',
+    short_name: 'DSB Solar Race',
     description: 'Rastreamento de embarcações em tempo real',
     start_url: '/',
     display: 'standalone',
-    background_color: '#0a1020',
-    theme_color: '#0a1020',
+    background_color: '#edf0e4',
+    theme_color: '#edf0e4',
     icons: [
       {
         src: '/icons/icon-192.png',

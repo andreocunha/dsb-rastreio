@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Production offline manifest is generated after Next builds.
+/public/offline-manifest.js

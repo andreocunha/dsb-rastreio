@@ -1,87 +1,86 @@
-const TILE_CACHE = 'map-tiles-v1';
-const STATIC_CACHE = 'static-v1';
-const MAX_TILE_CACHE_SIZE = 300;
+/* The build manifest changes with every production build. Never cache API/telemetry responses. */
+importScripts('/offline-manifest.js');
+const SHELL = `dsb-shell-${self.DSB_BUILD}`;
+const TILES = 'dsb-satellite-v2';
+const ASSETS = new Set(self.DSB_ASSETS);
+const TILE_LIMIT = 120;
 
-// Cache static assets on install
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) =>
-      cache.addAll(['/', '/offline'])
-    ).catch(() => {})
-  );
+self.addEventListener('install', event => {
+  // Installation is atomic: an offline-ready shell always includes its exact JS/CSS build.
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL);
+    try {
+      await cache.addAll(self.DSB_ASSETS.map(path => new Request(path, {cache: 'reload'})));
+    } catch (error) {
+      await caches.delete(SHELL);
+      throw error;
+    }
+  })());
 });
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => k !== TILE_CACHE && k !== STATIC_CACHE)
-          .map((k) => caches.delete(k))
-      )
-    ).then(() => self.clients.claim())
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    // Keep one previous shell for tabs still running an earlier build.
+    const previous = keys.filter(key => key.startsWith('dsb-shell-') && key !== SHELL);
+    await Promise.all(previous.slice(0, -1).map(key => caches.delete(key)));
+    await Promise.all(['map-tiles-v1', 'static-v1'].map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
-
-self.addEventListener('fetch', (event) => {
-  const url = event.request.url;
-
-  // Tile requests — cache-first
-  if (url.includes('arcgisonline.com') || url.includes('tile')) {
-    event.respondWith(
-      caches.open(TILE_CACHE).then(async (cache) => {
-        const cached = await cache.match(event.request);
-        if (cached) return cached;
-
-        try {
-          const response = await fetch(event.request);
-          if (response.ok) {
-            cache.put(event.request, response.clone());
-            trimCache(cache);
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data?.type === 'CHECK_OFFLINE') {
+    event.waitUntil((async () => {
+      const cache = await caches.open(SHELL);
+      const ready = (await cache.keys()).length >= ASSETS.size && !!(await cache.match('/'));
+      event.source?.postMessage({type: 'OFFLINE_READY', ready});
+    })());
+  }
+});
+let tileWrites = Promise.resolve();
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin === self.location.origin) {
+    // HTML is tied to this worker's precached build; RSC, API, HMR and live data bypass it.
+    if (request.mode === 'navigate' && url.pathname === '/') {
+      event.respondWith((async () => (await (await caches.open(SHELL)).match('/')) || fetch(request))());
+      return;
+    }
+    if ((ASSETS.has(url.pathname) && url.pathname !== '/') || url.pathname.startsWith('/_next/static/')) {
+      event.respondWith((async () => {
+        const current = await (await caches.open(SHELL)).match(url.pathname);
+        if (current) return current;
+        if (url.pathname.startsWith('/_next/static/')) {
+          for (const name of (await caches.keys()).filter(key => key.startsWith('dsb-shell-') && key !== SHELL)) {
+            const previous = await (await caches.open(name)).match(url.pathname);
+            if (previous) return previous;
           }
-          return response;
-        } catch {
-          return new Response('', { status: 408 });
         }
-      })
-    );
+        return fetch(request);
+      })());
+    }
     return;
   }
-
-  // App shell — network-first with cache fallback
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
-    return;
-  }
-
-  // Static assets — stale-while-revalidate
-  if (event.request.destination === 'script' || event.request.destination === 'style') {
-    event.respondWith(
-      caches.open(STATIC_CACHE).then(async (cache) => {
-        const cached = await cache.match(event.request);
-        const fetchPromise = fetch(event.request).then((response) => {
-          if (response.ok) cache.put(event.request, response.clone());
-          return response;
-        }).catch(() => cached);
-        return cached || fetchPromise;
-      })
-    );
-  }
+  if (url.hostname !== 'server.arcgisonline.com' || !url.pathname.startsWith('/ArcGIS/rest/services/World_Imagery/MapServer/tile/')) return;
+  const responsePromise = (async () => {
+    const cache = await caches.open(TILES);
+    const hit = await cache.match(request);
+    if (hit) return hit;
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        const copy = response.clone();
+        tileWrites = tileWrites.then(async () => {
+          await cache.put(request, copy);
+          const keys = await cache.keys();
+          await Promise.all(keys.slice(0, Math.max(0, keys.length - TILE_LIMIT)).map(key => cache.delete(key)));
+        }).catch(() => { /* Storage pressure must never break rendering. */ });
+      }
+      return response;
+    } catch { return new Response('', {status: 503}); }
+  })();
+  event.respondWith(responsePromise);
+  event.waitUntil(responsePromise.then(() => tileWrites));
 });
-
-async function trimCache(cache) {
-  const keys = await cache.keys();
-  if (keys.length > MAX_TILE_CACHE_SIZE) {
-    const toDelete = keys.length - MAX_TILE_CACHE_SIZE;
-    await Promise.all(keys.slice(0, toDelete).map((k) => cache.delete(k)));
-  }
-}

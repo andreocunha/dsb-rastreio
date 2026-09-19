@@ -50,6 +50,8 @@ export const ROUTE_COLORS: { id: string; hex: string; label: string }[] = [
 export type BoatType = 'mono' | 'cat' | 'arrow' | 'jetski' | 'support';
 
 export interface Boat {
+  activity: 'racing' | 'waiting' | 'support';
+  raceRouteId: string | null;
   id: string;
   label: string;
   type: BoatType;
@@ -67,9 +69,13 @@ export interface Boat {
   trail: [number, number][];
 }
 
-export type EditTool = 'buoy' | 'finish' | 'maintenance' | 'route' | null;
+export type EditTool = 'buoy' | 'finish' | 'maintenance' | 'waiting' | 'route' | null;
 
 export interface MapState {
+  style: 'chart' | 'satellite';
+  paused: boolean;
+  reducedMotion: boolean;
+  animationTime: number;
   // Viewport
   width: number;
   height: number;
@@ -93,9 +99,11 @@ export interface MapState {
   boats: Boat[];
 
   // Buoys & circuit
+  courseId: string;
   buoys: Buoy[];
   finishLine: FinishLine;
   maintenanceArea: GeoPoint[];
+  waitingArea: GeoPoint[];
   routes: Route[];
   activeRouteId: string | null;
   editTool: EditTool;
@@ -114,12 +122,12 @@ export interface MapConfig {
 
 export const DEFAULT_CONFIG: MapConfig = {
   tileSize: 256,
-  zoomMin: 3,
-  zoomMax: 18,
+  zoomMin: 14,
+  zoomMax: 21,
   startLat: -22.414654,
   startLon: -41.818751,
   tileUrl:
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile',
-  maxTrailLength: 800,
-  maxCachedTiles: 600,
+  maxTrailLength: 100,
+  maxCachedTiles: 96,
 };

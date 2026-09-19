@@ -1,24 +1,23 @@
 import type { MapState, MapConfig, ScreenPoint, GeoPoint, Boat } from './types';
 import { geoToScreen, createFrameProjection, projectGeo, type FrameProjection } from './geo';
 import { TileCache } from './tiles';
+import { renderChart } from './chart';
+import { editHandles } from './editing';
 
-/** Draw a single frame of the map */
-export function renderFrame(
-  ctx: CanvasRenderingContext2D,
-  state: MapState,
-  config: MapConfig,
-  tiles: TileCache,
-): void {
+/** Static layer: invalidated only by the camera, style, viewport or tile arrivals. */
+export function renderBackground(ctx: CanvasRenderingContext2D, state: MapState, config: MapConfig, tiles: TileCache) {
+  renderChart(ctx, state, config);
+  if (state.style !== 'satellite') return;
+  const target = Math.max(config.zoomMin, Math.min(18, config.zoomMax, Math.round(state.zoom)));
+  renderTiles(ctx, state, config, tiles, state.width, state.height, config.tileSize,
+    state.zoom, state.worldCX, state.worldCY, target);
+}
+
+/** Transparent animated layer. The geographic background is never repainted here. */
+export function renderFrame(ctx: CanvasRenderingContext2D, state: MapState, config: MapConfig): void {
   const { width: W, height: H, zoom, worldCX, worldCY } = state;
   const TS = config.tileSize;
-
-  ctx.fillStyle = '#0c1225';
-  ctx.fillRect(0, 0, W, H);
-
-  // --- Tiles (stable zoom: only switch tile set when new level is loaded) ---
-  const targetZi = Math.max(config.zoomMin, Math.min(config.zoomMax, Math.round(zoom)));
-  renderTiles(ctx, state, config, tiles, W, H, TS, zoom, worldCX, worldCY, targetZi);
-
+  ctx.clearRect(0, 0, W, H);
   // --- Trails (all boats, using pre-computed projection) ---
   const fp = createFrameProjection(
     worldCX, worldCY, zoom, TS, W, H,
@@ -28,7 +27,10 @@ export function renderFrame(
   }
 
   // --- Maintenance area ---
-  drawMaintenanceArea(ctx, state, config);
+  drawArea(ctx, state, config, state.maintenanceArea, 'MANUTENÇÃO', '240,192,64', '#f0c040');
+  if (state.courseId === 'match-race' || state.courseId === 'slalom' || state.editTool === 'waiting') {
+    drawArea(ctx, state, config, state.waitingArea, 'ESPERA', '190,220,244', '#d1e6ef');
+  }
 
   // --- Routes ---
   drawRoutes(ctx, state, config);
@@ -42,6 +44,15 @@ export function renderFrame(
   // --- Boats ---
   for (const boat of state.boats) {
     drawBoat(ctx, state, config, boat, boat.id === state.followBoatId);
+  }
+  if (state.editTool) {
+    for (const {point} of editHandles(state)) {
+      const p = gp2s(point, config, state);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = '#fffff7'; ctx.fill();
+      ctx.strokeStyle = '#256d5a'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fillStyle = '#256d5a'; ctx.fill();
+    }
   }
 }
 
@@ -59,10 +70,10 @@ function tileGrid(
   const hh = H / 2 / tds;
   return {
     frac, tds, mx, tcx, tcy,
-    x0: Math.floor(tcx - hw) - 1,
-    x1: Math.ceil(tcx + hw) + 1,
-    y0: Math.floor(tcy - hh) - 1,
-    y1: Math.ceil(tcy + hh) + 1,
+    x0: Math.floor(tcx - hw),
+    x1: Math.floor(tcx + hw),
+    y0: Math.floor(tcy - hh),
+    y1: Math.floor(tcy + hh),
   };
 }
 
@@ -76,30 +87,7 @@ function renderTiles(
   zoom: number, worldCX: number, worldCY: number,
   targetZi: number,
 ): void {
-  // Clamp activeZi to valid range
-  if (state.activeZi < config.zoomMin) state.activeZi = config.zoomMin;
-  if (state.activeZi > config.zoomMax) state.activeZi = config.zoomMax;
-
-  // If target changed, check if we can switch
-  if (targetZi !== state.activeZi) {
-    const tg = tileGrid(targetZi, zoom, TS, worldCX, worldCY, W, H);
-    const { loaded, total } = tiles.countLoaded(targetZi, tg.x0, tg.x1, tg.y0, tg.y1);
-
-    // Start loading target tiles
-    const tmx = 1 << targetZi;
-    for (let tx = tg.x0; tx <= tg.x1; tx++) {
-      for (let ty = tg.y0; ty <= tg.y1; ty++) {
-        if (ty < 0 || ty >= tmx) continue;
-        const wx = ((tx % tmx) + tmx) % tmx;
-        tiles.load(`${targetZi}/${wx}/${ty}`, targetZi, wx, ty);
-      }
-    }
-
-    // Switch when 70%+ loaded
-    if (total > 0 && loaded / total >= 0.7) {
-      state.activeZi = targetZi;
-    }
-  }
+  state.activeZi = targetZi;
 
   // Render from activeZi (always consistent — no mixed zoom levels)
   const g = tileGrid(state.activeZi, zoom, TS, worldCX, worldCY, W, H);
@@ -139,7 +127,7 @@ function drawTrail(
   if (trail.length < 2) return;
 
   const len = trail.length;
-  const BATCHES = 10;
+  const BATCHES = 5;
   const batchSize = Math.ceil(len / BATCHES);
   const rgb = hexToRgbTuple(boat.accentColor);
   const minDistSq = MIN_TRAIL_SEG_PX * MIN_TRAIL_SEG_PX;
@@ -150,7 +138,7 @@ function drawTrail(
     if (start >= end) continue;
 
     const mid = (start + end) / 2 / len;
-    const alpha = mid * mid * 0.5;
+    const alpha = mid * mid * 0.35;
     if (alpha < 0.005) continue;
 
     ctx.beginPath();
@@ -186,41 +174,43 @@ function drawBoat(
     state.width, state.height,
   );
 
+  if (bp.x < -70 || bp.y < -100 || bp.x > state.width + 70 || bp.y > state.height + 100) return;
   ctx.save();
   ctx.translate(bp.x, bp.y);
-  ctx.rotate((boat.heading * Math.PI) / 180);
-
-  drawWake(ctx, boat.speed);
-
   if (isFollowed) {
-    ctx.beginPath();
-    ctx.arc(0, 0, 22, 0, Math.PI * 2);
-    ctx.strokeStyle = boat.accentColor;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 3]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(0, 0, 28, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1.5; ctx.stroke();
   }
-
-  // Glow (skip for arrow type — too visible on simple shape)
-  if (boat.type !== 'arrow') {
-    ctx.beginPath();
-    ctx.ellipse(0, 1, 10, 14, 0, 0, Math.PI * 2);
-    ctx.fillStyle = hexToRgba(boat.accentColor, 0.12);
-    ctx.fill();
-  }
-
-  switch (boat.type) {
-    case 'cat':     drawCatamaran(ctx, boat); break;
-    case 'mono':    drawMonohull(ctx, boat); break;
-    case 'jetski':  drawJetSki(ctx, boat); break;
-    case 'support': drawSupportBoat(ctx, boat); break;
-    case 'arrow':   drawArrow(ctx, boat); break;
-  }
-
+  ctx.rotate((boat.heading * Math.PI) / 180);
+  drawWake(ctx, boat.speed, state.reducedMotion ? 0 : state.animationTime);
+  const sprite = boatSprite(boat);
+  ctx.drawImage(sprite, -24, -28, 48, 56);
   ctx.restore();
 }
 
+// Hulls, panels and their soft shadows are rasterized once, then just rotated/blitted.
+const sprites = new Map<string, HTMLCanvasElement>();
+function boatSprite(boat: Boat) {
+  const key = `${boat.type}/${boat.hullColor}/${boat.accentColor}`;
+  const existing = sprites.get(key);
+  if (existing) return existing;
+  const canvas = document.createElement('canvas');
+  canvas.width = 96; canvas.height = 112;
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(2, 2); ctx.translate(24, 28); ctx.scale(1.22, 1.22);
+  ctx.shadowColor = 'rgba(12,56,58,.35)'; ctx.shadowBlur = 5;
+  ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 3;
+  switch (boat.type) {
+    case 'cat': drawCatamaran(ctx, boat); break;
+    case 'mono': drawMonohull(ctx, boat); break;
+    case 'jetski': drawJetSki(ctx, boat); break;
+    case 'support': drawSupportBoat(ctx, boat); break;
+    case 'arrow': drawArrow(ctx, boat); break;
+  }
+  sprites.set(key, canvas);
+  return canvas;
+}
 
 
 function drawMonohull(ctx: CanvasRenderingContext2D, boat: Boat): void {
@@ -406,56 +396,20 @@ function drawSupportBoat(ctx: CanvasRenderingContext2D, boat: Boat): void {
   ctx.stroke();
 }
 
-/** Draw an organic wake behind the boat, scaled by speed */
-function drawWake(ctx: CanvasRenderingContext2D, speed: number): void {
-  const intensity = Math.max(0, Math.min(1, (speed - 2) / 10));
-  if (intensity < 0.01) return;
-
-  const now = Date.now();
-  const wakeLen = 25 + intensity * 45;
-  const spread = 4 + intensity * 10;
-
-  // Tapered foam shape — filled, fades out with gradient
-  const grad = ctx.createLinearGradient(0, 14, 0, 14 + wakeLen);
-  grad.addColorStop(0, `rgba(255,255,255,${0.25 + intensity * 0.2})`);
-  grad.addColorStop(0.4, `rgba(200,230,255,${0.12 + intensity * 0.1})`);
-  grad.addColorStop(1, 'rgba(200,230,255,0)');
-
-  ctx.beginPath();
-  ctx.moveTo(0, 14);
-  ctx.quadraticCurveTo(spread * 0.3, 14 + wakeLen * 0.3, spread, 14 + wakeLen);
-  ctx.lineTo(-spread, 14 + wakeLen);
-  ctx.quadraticCurveTo(-spread * 0.3, 14 + wakeLen * 0.3, 0, 14);
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Animated ripple arcs drifting away from stern
-  for (let i = 0; i < 3; i++) {
-    const phase = (now / 1200 + i / 3) % 1;
-    const y = 18 + phase * wakeLen * 0.7;
-    const rx = 2 + phase * spread * 0.5;
-    const a = (0.3 + intensity * 0.25) * (1 - phase);
-    if (a < 0.02) continue;
-
+/** Small wake arcs, never the large translucent cones that obscure nearby boats. */
+function drawWake(ctx: CanvasRenderingContext2D, speed: number, time: number): void {
+  const intensity = Math.max(0, Math.min(1, speed / 14));
+  if (!intensity) return;
+  for (let i = 0; i < 5; i++) {
+    const phase = (time / 1700 + i / 5) % 1;
+    const y = 17 + phase * (22 + intensity * 14);
+    const w = 3 + phase * 12;
     ctx.beginPath();
-    ctx.ellipse(0, y, rx, rx * 0.2, 0, 0.3, Math.PI - 0.3);
-    ctx.strokeStyle = `rgba(220,240,255,${a})`;
-    ctx.lineWidth = 0.8;
+    ctx.moveTo(-w, y + 3);
+    ctx.quadraticCurveTo(0, y - 2, w, y + 3);
+    ctx.strokeStyle = `rgba(236,255,247,${(1 - phase) * 0.48})`;
+    ctx.lineWidth = 1.4 * (1 - phase) + 0.3;
     ctx.stroke();
-  }
-
-  // Small bubbles near stern at higher speeds
-  if (intensity > 0.35) {
-    const ba = (intensity - 0.35) * 0.6;
-    for (let i = 0; i < 4; i++) {
-      const seed = now * 0.005 + i * 2.3;
-      const bx = Math.sin(seed) * spread * 0.4;
-      const by = 16 + (Math.abs(Math.cos(seed * 1.1)) * 10);
-      ctx.beginPath();
-      ctx.arc(bx, by, 0.7 + Math.sin(seed * 0.6) * 0.3, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(230,245,255,${ba})`;
-      ctx.fill();
-    }
   }
 }
 
@@ -464,7 +418,7 @@ function drawBuoys(
   state: MapState,
   config: MapConfig,
 ): void {
-  const now = Date.now();
+  const now = state.reducedMotion ? 0 : state.animationTime;
 
   for (let i = 0; i < state.buoys.length; i++) {
     const b = state.buoys[i];
@@ -730,12 +684,15 @@ function drawFinishLine(
 
 // ─── Maintenance area ────────────────────────────────────────────
 
-function drawMaintenanceArea(
+function drawArea(
   ctx: CanvasRenderingContext2D,
   state: MapState,
   config: MapConfig,
+  area: GeoPoint[],
+  label: string,
+  rgb: string,
+  color: string,
 ): void {
-  const area = state.maintenanceArea;
   if (area.length === 0) return;
 
   const pts = area.map((p) => gp2s(p, config, state));
@@ -745,7 +702,7 @@ function drawMaintenanceArea(
     for (const p of pts) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#f0c040';
+      ctx.fillStyle = color;
       ctx.strokeStyle = 'rgba(0,0,0,0.5)';
       ctx.lineWidth = 1.5;
       ctx.fill();
@@ -756,7 +713,7 @@ function drawMaintenanceArea(
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       ctx.lineTo(pts[1].x, pts[1].y);
-      ctx.strokeStyle = 'rgba(240,192,64,0.4)';
+      ctx.strokeStyle = `rgba(${rgb},0.4)`;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.stroke();
@@ -773,21 +730,21 @@ function drawMaintenanceArea(
     ctx.lineTo(pts[i].x, pts[i].y);
   }
   ctx.closePath();
-  ctx.fillStyle = 'rgba(240,192,64,0.18)';
+  ctx.fillStyle = `rgba(${rgb},0.12)`;
   ctx.fill();
 
   // Dashed border
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = 'rgba(240,192,64,0.7)';
+  ctx.strokeStyle = `rgba(${rgb},0.7)`;
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.setLineDash([]);
 
   // Diagonal hatch lines for visual clarity
-  const minX = Math.min(...pts.map((p) => p.x));
-  const maxX = Math.max(...pts.map((p) => p.x));
-  const minY = Math.min(...pts.map((p) => p.y));
-  const maxY = Math.max(...pts.map((p) => p.y));
+  const minX = Math.max(-20, Math.min(...pts.map((p) => p.x)));
+  const maxX = Math.min(state.width + 20, Math.max(...pts.map((p) => p.x)));
+  const minY = Math.max(-20, Math.min(...pts.map((p) => p.y)));
+  const maxY = Math.min(state.height + 20, Math.max(...pts.map((p) => p.y)));
 
   ctx.clip(); // Clip hatch to polygon
   ctx.beginPath();
@@ -796,7 +753,7 @@ function drawMaintenanceArea(
     ctx.moveTo(d - maxY, maxY);
     ctx.lineTo(d - minY, minY);
   }
-  ctx.strokeStyle = 'rgba(240,192,64,0.12)';
+  ctx.strokeStyle = `rgba(${rgb},0.12)`;
   ctx.lineWidth = 1;
   ctx.stroke();
 
@@ -806,7 +763,7 @@ function drawMaintenanceArea(
   for (const p of pts) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#f0c040';
+    ctx.fillStyle = color;
     ctx.fill();
   }
 
@@ -815,9 +772,9 @@ function drawMaintenanceArea(
   const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
   ctx.font = 'bold 9px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#f0c040';
+  ctx.fillStyle = color;
   ctx.strokeStyle = 'rgba(0,0,0,0.7)';
   ctx.lineWidth = 2.5;
-  ctx.strokeText('MANUTENÇÃO', cx, cy);
-  ctx.fillText('MANUTENÇÃO', cx, cy);
+  ctx.strokeText(label, cx, cy);
+  ctx.fillText(label, cx, cy);
 }
