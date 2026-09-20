@@ -274,23 +274,27 @@ export function initEngine(
   }
 
   const BACKGROUND_MARGIN = 80;
+  const MAX_FOREGROUND_PIXELS = 5_000_000;
   let viewportRevision = 0;
   // --- Resize ---
   function resize() {
     viewportRevision++;
-    state.dpr = Math.min(devicePixelRatio || 1, 1.5);
     state.width = window.innerWidth;
     state.height = window.innerHeight;
-    canvas.width = state.width * state.dpr;
-    canvas.height = state.height * state.dpr;
-    background.width = (state.width + BACKGROUND_MARGIN * 2) * state.dpr;
-    background.height = (state.height + BACKGROUND_MARGIN * 2) * state.dpr;
+    const screenDpr = devicePixelRatio || 1;
+    // Fine boat details need native phone density; bound the full-screen buffer on larger displays.
+    state.dpr = Math.min(screenDpr, 3, Math.sqrt(MAX_FOREGROUND_PIXELS / Math.max(1, state.width * state.height)));
+    const backgroundDpr = Math.min(screenDpr, 1.5);
+    canvas.width = Math.floor(state.width * state.dpr);
+    canvas.height = Math.floor(state.height * state.dpr);
+    background.width = Math.floor((state.width + BACKGROUND_MARGIN * 2) * backgroundDpr);
+    background.height = Math.floor((state.height + BACKGROUND_MARGIN * 2) * backgroundDpr);
     background.style.width = `${state.width + BACKGROUND_MARGIN * 2}px`;
     background.style.height = `${state.height + BACKGROUND_MARGIN * 2}px`;
     background.style.left = `${-BACKGROUND_MARGIN}px`;
     background.style.top = `${-BACKGROUND_MARGIN}px`;
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
-    backgroundCtx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    backgroundCtx.setTransform(backgroundDpr, 0, 0, backgroundDpr, 0, 0);
   }
 
   function fit(padding: Partial<Record<'left' | 'right' | 'top' | 'bottom', number>> = {}) {

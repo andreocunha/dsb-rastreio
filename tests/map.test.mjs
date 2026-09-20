@@ -59,7 +59,9 @@ test('stationary camera paints background once, caps DPR, pauses and suspends hi
   for (let time=40;time<=800;time+=40) nextFrame(time);
   assert.equal(drawBackground,1);
   assert.equal(drawFrame,20);
-  assert.equal(fg.width,390*1.5);
+  assert.equal(fg.width,390*3,'phone foreground preserves native 3x detail');
+  assert.equal(fg.height,844*3);
+  assert.equal(bg.width,(390+160)*1.5,'background keeps its cheaper independent resolution');
   engine.setPaused(true);
   nextFrame(1320); const lat=fleet[0].lat;
   nextFrame(1900); assert.equal(fleet[0].lat,lat);
@@ -68,6 +70,10 @@ test('stationary camera paints background once, caps DPR, pauses and suspends hi
   engine.follow('b1'); nextFrame(1980); assert.notDeepEqual(renderedCamera, beforeFollow, 'following also works while paused without requiring a full background repaint');
   const beforeResize = drawBackground; resizeEvents.resize(); nextFrame(2020);
   assert.equal(drawBackground,beforeResize+1,'same-size resize must repaint a cleared backing canvas');
+  window.innerWidth=3840; window.innerHeight=2160; resizeEvents.resize();
+  assert.ok(fg.width*fg.height<=5_000_000,'large dense displays stay within the foreground pixel budget');
+  window.innerWidth=844; window.innerHeight=390; resizeEvents.resize();
+  assert.equal(fg.width,844*3,'rotation restores native density when it fits the budget');
   document.hidden=true; events.visibilitychange(); assert.equal(nextFrame,undefined);
   document.hidden=false; events.visibilitychange(); assert.equal(typeof nextFrame,'function');
   engine.destroy(); assert.equal(nextFrame,undefined);

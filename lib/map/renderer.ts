@@ -191,16 +191,17 @@ function drawBoat(
 
 // Hulls, panels and their soft shadows are rasterized once, then just rotated/blitted.
 const sprites = new Map<string, HTMLCanvasElement>();
+const SPRITE_DPR = 3;
 function boatSprite(boat: Boat) {
   const key = `${boat.type}/${boat.hullColor}/${boat.accentColor}`;
   const existing = sprites.get(key);
   if (existing) return existing;
   const canvas = document.createElement('canvas');
-  canvas.width = 96; canvas.height = 112;
+  canvas.width = 48 * SPRITE_DPR; canvas.height = 56 * SPRITE_DPR;
   const ctx = canvas.getContext('2d')!;
-  ctx.scale(2, 2); ctx.translate(24, 28); ctx.scale(1.22, 1.22);
-  ctx.shadowColor = 'rgba(12,56,58,.35)'; ctx.shadowBlur = 5;
-  ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 3;
+  ctx.scale(SPRITE_DPR, SPRITE_DPR); ctx.translate(24, 28); ctx.scale(1.22, 1.22);
+  ctx.shadowColor = 'rgba(12,56,58,.35)'; ctx.shadowBlur = 2.5 * SPRITE_DPR;
+  ctx.shadowOffsetX = SPRITE_DPR; ctx.shadowOffsetY = 1.5 * SPRITE_DPR;
   switch (boat.type) {
     case 'cat': drawCatamaran(ctx, boat); break;
     case 'mono': drawMonohull(ctx, boat); break;

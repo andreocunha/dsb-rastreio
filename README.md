@@ -37,7 +37,7 @@ Seven 2026 course presets include the supplied schedule. Their geometry is appro
 
 ## Rendering budget
 
-The geographic background and transparent moving layer use separate canvases. A small margin allows the background to be translated during camera movement before repainting. Boat hulls/panels/shadows are prerendered sprites; movement is capped at 30 fps (15 with reduced motion), drawing resolution at DPR 1.5, trails at 100 points per boat sampled every 400 ms. The fleet summary updates at 2 Hz. Hidden tabs stop their animation loop; paused scenes are redrawn only after an interaction changes them.
+The geographic background and transparent moving layer use separate canvases. A small margin allows the background to be translated during camera movement before repainting. Boat hulls/panels/shadows are cached sprites rendered at 3× resolution. The moving layer follows screen density up to DPR 3 with a five-million-pixel buffer limit; the background stays capped at DPR 1.5. Movement is capped at 30 fps (15 with reduced motion), trails at 100 points per boat sampled every 400 ms. The fleet summary updates at 2 Hz. Hidden tabs stop their animation loop; paused scenes are redrawn only after an interaction changes them.
 
 These are implementation limits, not a guarantee for every device. Benchmark a representative low-end Android device and the intended competition telemetry before the event.
 
