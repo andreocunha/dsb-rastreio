@@ -3,6 +3,7 @@ import { geoToScreen, createFrameProjection, projectGeo, type FrameProjection } 
 import { TileCache } from './tiles';
 import { renderChart } from './chart';
 import { editHandles } from './editing';
+import { drawWake } from './wake';
 
 /** Static layer: invalidated only by the camera, style, viewport or tile arrivals. */
 export function renderBackground(ctx: CanvasRenderingContext2D, state: MapState, config: MapConfig, tiles: TileCache) {
@@ -395,23 +396,6 @@ function drawSupportBoat(ctx: CanvasRenderingContext2D, boat: Boat): void {
   ctx.strokeStyle = boat.accentColor;
   ctx.lineWidth = 1.5;
   ctx.stroke();
-}
-
-/** Small wake arcs, never the large translucent cones that obscure nearby boats. */
-function drawWake(ctx: CanvasRenderingContext2D, speed: number, time: number): void {
-  const intensity = Math.max(0, Math.min(1, speed / 14));
-  if (!intensity) return;
-  for (let i = 0; i < 5; i++) {
-    const phase = (time / 1700 + i / 5) % 1;
-    const y = 17 + phase * (22 + intensity * 14);
-    const w = 3 + phase * 12;
-    ctx.beginPath();
-    ctx.moveTo(-w, y + 3);
-    ctx.quadraticCurveTo(0, y - 2, w, y + 3);
-    ctx.strokeStyle = `rgba(236,255,247,${(1 - phase) * 0.48})`;
-    ctx.lineWidth = 1.4 * (1 - phase) + 0.3;
-    ctx.stroke();
-  }
 }
 
 function drawBuoys(

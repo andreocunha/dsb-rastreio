@@ -20,6 +20,31 @@ function modules(globals = {}, mocks = {}) {
   return load;
 }
 
+test('wake disappears at rest, grows through race speeds and stays bounded above sprint speed', () => {
+  const {drawWake} = modules()('lib/map/wake.ts');
+  function sample(speed, time = 1000) {
+    const arcs = [];
+    const ctx = {
+      beginPath(){}, moveTo(){},
+      quadraticCurveTo(_cx,_cy,x,y){ this.endpoint = {x,y}; },
+      stroke(){ arcs.push({...this.endpoint,alpha:Number(this.strokeStyle.split(',').at(-1).slice(0,-1)),width:this.lineWidth}); },
+    };
+    drawWake(ctx,speed,time);
+    return arcs;
+  }
+  for (const speed of [0,0.1,0.3,-1,NaN,Infinity]) assert.deepEqual(sample(speed),[]);
+  for (const time of [0,400,1000,1700]) {
+    const slow=sample(1,time), normal=sample(6,time), sprint=sample(12,time);
+    assert.equal(sprint.length,5,'effect keeps a fixed drawing budget');
+    for (const property of ['x','y','alpha','width']) {
+      const peak = arcs => Math.max(...arcs.map(a=>a[property]));
+      assert.ok(peak(slow)<peak(normal),`${property} increases toward normal race speed`);
+      assert.ok(peak(normal)<peak(sprint),`${property} increases toward sprint speed`);
+    }
+    assert.deepEqual(sample(25,time),sprint,'jet skis do not stretch the competitors’ visual scale');
+  }
+});
+
 test('coordinate projection remains aligned through zoom and geographic round trips', () => {
   const geo = modules()('lib/map/geo.ts');
   const center = geo.geoToWorld(-22.411,-41.821);

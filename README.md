@@ -41,6 +41,8 @@ The geographic background and transparent moving layer use separate canvases. A 
 
 These are implementation limits, not a guarantee for every device. Benchmark a representative low-end Android device and the intended competition telemetry before the event.
 
+Wake length, width and opacity follow each boat's speed in knots: hidden up to 0.3 knots, moderate at 6 knots, and capped at 12 knots. Faster support craft use that same ceiling without changing the competitors' scale. Each visible wake uses five arcs; the separate colored position history still represents the traveled path.
+
 ## Checks
 
 ```sh
