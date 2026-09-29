@@ -349,7 +349,6 @@ export default function MapCanvas() {
         <div className="course-actions"><button disabled={!canUndo} onClick={() => engineRef.current?.undoCourse()}>Desfazer ajuste</button>{currentCourse && <button onClick={() => engineRef.current?.resetCourse()}>Restaurar modelo</button>}<button onClick={fitVisibleCourse}>Enquadrar prova</button></div>
         <div className={`saved-note ${saveState.state==='error' ? 'saved-note--error' : ''}`} role="status"><Icon name={saveState.state==='error' ? 'offline' : 'check'} size={13}/>{saveState.state==='saving' ? 'Salvando…' : saveState.state==='error' ? (saveState.message || 'Não foi possível salvar.') : isLive ? 'Salvo no servidor · o público vê em segundos' : 'Salvo no servidor · ainda não publicado'}</div>
       </section>}
-      <div className="map-attribution"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>{(view3D?photographic:style==='satellite')&&<> · <a href="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer" target="_blank" rel="noreferrer">Esri, Vantor, Earthstar Geographics e comunidade GIS</a></>}</div>
       {updateReady && <button className="update-notice" onClick={updateApp}>Nova versão disponível <strong>Atualizar ↗</strong></button>}
       {!online && style === 'satellite' && <div className="offline-notice" role="status">Satélite limitado às imagens já visitadas. <button onClick={changeStyle}>Usar mapa ilustrado</button></div>}
     </main>
