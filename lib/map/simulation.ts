@@ -1,11 +1,11 @@
 import type { Boat, GeoPoint, MapState, Route } from './types';
 import { bearing } from './geo';
 import { WAITING_AREA, MAINTENANCE_AREA } from './courses';
-import geography from './data/imboassica.json';
+import water from './data/imboassica-water.json';
 
 const METERS_LAT = 111320;
 const METERS_LON = METERS_LAT * Math.cos(22.414 * Math.PI / 180);
-const lake = geography.features.find(f => f.id === 132616186)!.points.map(([lon, lat]) => ({lat, lon}));
+const lake = water.lagoon[0].map(([lon, lat]) => ({lat, lon}));
 export const distanceMeters = (a: GeoPoint, b: GeoPoint) => Math.hypot((b.lon - a.lon) * METERS_LON, (b.lat - a.lat) * METERS_LAT);
 const offset = (p: GeoPoint, east: number, north: number): GeoPoint => ({lat: p.lat + north / METERS_LAT, lon: p.lon + east / METERS_LON});
 export function insideArea(p: GeoPoint, area: GeoPoint[]) {
@@ -61,12 +61,12 @@ function patrolSlots(state: MapState) {
   const candidates: GeoPoint[]=[];
   for(let lat=-22.4163;lat< -22.406;lat+=.00045) for(let lon=-41.836;lon< -41.8128;lon+=.00055) {
     const p={lat,lon};
-    if (distanceToRoutes(p,state.routes)<35 || state.buoys.some(b=>distanceMeters(p,b)<30) || state.routes.some(r=>insideArea(p,r.points)) || insideArea(p,state.waitingArea) || insideArea(p,state.maintenanceArea)) continue;
-    if (safeCircle(p,lake,9)) candidates.push(p);
+    if (distanceToRoutes(p,state.routes)<48 || state.buoys.some(b=>distanceMeters(p,b)<42) || state.routes.some(r=>insideArea(p,r.points)) || insideArea(p,state.waitingArea) || insideArea(p,state.maintenanceArea)) continue;
+    if (safeCircle(p,lake,24)) candidates.push(p);
   }
   const result: GeoPoint[]=[];
   for(const target of targets) {
-    const available=candidates.filter(p=>result.every(q=>distanceMeters(p,q)>45));
+    const available=candidates.filter(p=>result.every(q=>distanceMeters(p,q)>60));
     available.sort((a,b)=>distanceMeters(a,target)-distanceMeters(b,target));
     result.push(available[0] ?? center(MAINTENANCE_AREA));
   }
@@ -79,11 +79,12 @@ function turn(boat: Boat, heading: number, dt: number) {
   boat.heading=(boat.heading+diff*(1-Math.exp(-dt/300))+360)%360;
 }
 function idle(boat: Boat, anchor: GeoPoint, time: number, dt: number, support: boolean) {
-  const radius=support ? 5 : .7, seconds=support ? 100 : 80;
+  // Support craft idle on a slow, lazy loop beside the course, ready to respond.
+  const radius=support ? 16 : .7, seconds=support ? 75 : 80;
   const phase=time/1000/seconds*Math.PI*2+boat.speedPhaseOffset;
-  const p=offset(anchor,Math.cos(phase)*radius,Math.sin(phase)*radius);
+  const p=offset(anchor,Math.cos(phase)*radius,Math.sin(phase)*radius*(support ? .6 : 1));
   boat.lat=p.lat; boat.lon=p.lon;
-  boat.speed=radius*2*Math.PI/seconds/.514444;
+  boat.speed=radius*(support ? 1.6 : 2)*Math.PI/seconds/.514444;
   turn(boat,(360-phase*180/Math.PI)%360,dt);
 }
 

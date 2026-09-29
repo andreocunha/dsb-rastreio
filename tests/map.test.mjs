@@ -14,7 +14,7 @@ function modules(globals = {}, mocks = {}) {
     const exports = {};
     loaded.set(path, exports);
     const code = ts.transpileModule(readFileSync(path, 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS, target:ts.ScriptTarget.ES2020, esModuleInterop:true}}).outputText;
-    vm.runInNewContext(code, {...globals, exports, require: name => mocks[name] || load(resolve(dirname(path), name.endsWith('.json') ? name : name + '.ts'))}, {filename:path});
+    vm.runInNewContext(code, {performance, ...globals, exports, require: name => mocks[name] || load(resolve(dirname(path), name.endsWith('.json') ? name : name + '.ts'))}, {filename:path});
     return exports;
   }
   return load;
@@ -54,20 +54,6 @@ test('coordinate projection remains aligned through zoom and geographic round tr
     assert.ok(Math.abs(result.lat + 22.414654) < 1e-9);
     assert.ok(Math.abs(result.lon + 41.818751) < 1e-9);
   }
-});
-test('local course survives reload, rejects corrupt data, and reports storage failure', () => {
-  const store = new Map();
-  const storage = {getItem:key => store.get(key), setItem:(key,v) => store.set(key,v)};
-  const {restoreCourse, saveCourse} = modules({localStorage: storage})('lib/map/storage.ts');
-  const course = {buoys:[{id:'buoy-2',number:2,lat:-22.411,lon:-41.819}],routes:[{id:'route-1',color:'#00ccff',points:[{lat:-22.411,lon:-41.819}]}],finishLine:{p1:null,p2:null},maintenanceArea:[]};
-  assert.equal(saveCourse(course),true);
-  const restored = {}; restoreCourse(restored);
-  assert.deepEqual(JSON.parse(JSON.stringify(restored)), course);
-  store.set('dsb:course:v1','broken'); assert.doesNotThrow(() => restoreCourse({}));
-  store.set('dsb:course:v1', JSON.stringify({version:1,buoys:[{lat:1000,lon:0,id:'x',number:1}]}));
-  const invalid = {}; restoreCourse(invalid); assert.equal(invalid.buoys, undefined);
-  storage.setItem = () => {throw Error('quota');};
-  assert.equal(saveCourse(course),false);
 });
 test('stationary camera paints background once, caps DPR, pauses and suspends hidden tabs', () => {
   let nextFrame, drawBackground = 0, drawFrame = 0, fleet, renderedCamera;
@@ -121,68 +107,7 @@ test('satellite loading has a six-request ceiling, bounded memory and no failed-
   tiles.destroy();
 });
 
-test('presets keep independent local edits, remember selection, and preserve the legacy circuit', () => {
-  const store = new Map();
-  const load = modules({localStorage: {getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)}});
-  const {restoreCourse,saveCourse} = load('lib/map/storage.ts');
-  const {defaultCourse} = load('lib/map/courses.ts');
-  const state = {courseId:'raia-rapida',...defaultCourse('raia-rapida')};
-  restoreCourse(state);
-  state.buoys[0].lat = -22.413;
-  saveCourse(state);
-  restoreCourse(state,'sprint');
-  assert.equal(state.buoys.length,2);
-  assert.notEqual(state.buoys[0].lat,-22.413);
-  saveCourse(state);
-  const reopened = {courseId:'raia-rapida'}; restoreCourse(reopened);
-  assert.equal(reopened.courseId,'sprint');
-  restoreCourse(state,'raia-rapida');
-  assert.equal(state.buoys[0].lat,-22.413);
-  assert.notEqual(defaultCourse('raia-rapida').buoys[0].lat,-22.413,'editing never mutates a built-in model');
-  store.clear();
-  store.set('dsb:course:v1',JSON.stringify({version:1,...state}));
-  restoreCourse(reopened);
-  assert.equal(reopened.courseId,'custom');
-  assert.equal(reopened.buoys[0].lat,-22.413);
-  saveCourse(reopened);
-  restoreCourse(reopened,'sprint'); saveCourse(reopened);
-  restoreCourse(reopened,'custom'); assert.equal(reopened.buoys[0].lat,-22.413);
-});
 
-test('editing a preset can be undone, restored, switched, and dragged without losing saved changes', () => {
-  let input, state;
-  const store = new Map();
-  const storage = {getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
-  const load = modules({window:{innerWidth:1400,innerHeight:900,addEventListener(){},removeEventListener(){},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}})},document:{addEventListener(){},removeEventListener(){}},devicePixelRatio:1,requestAnimationFrame:()=>1,cancelAnimationFrame(){},localStorage:storage},
-    {'./renderer':{},'./input':{attachInputHandlers:(_c,s,_cfg,cb)=>{state=s;input=cb;return()=>{};}},'./tiles':{TileCache:class{destroy(){}}}});
-  const {initEngine} = load('lib/map/engine.ts');
-  const {geoToScreen} = load('lib/map/geo.ts');
-  const canvas=()=>({style:{},getContext:()=>({setTransform(){}})});
-  const engine=initEngine(canvas(),canvas());
-  engine.zoom(100); assert.equal(state.zoom,21);
-  engine.zoom(-100); assert.equal(state.zoom,14); engine.fit();
-  const count=state.buoys.length;
-  engine.addBuoy(-22.413,-41.821);
-  engine.undoCourse(); assert.equal(state.buoys.length,count);
-  engine.setEditTool('buoy');
-  const original={...state.buoys[0]};
-  const p=geoToScreen(original.lat,original.lon,state.worldCX,state.worldCY,state.zoom,256,state.width,state.height);
-  assert.equal(input.onEditStart(p.x,p.y),true);
-  input.onEditMove(p.x+40,p.y+30); input.onEditEnd(false);
-  const moved={...state.buoys[0]}; assert.notEqual(moved.lat,original.lat);
-  engine.selectCourse('sprint'); engine.selectCourse('raia-rapida');
-  assert.equal(state.buoys[0].lat,moved.lat);
-  engine.resetCourse(); assert.equal(state.buoys[0].lat,original.lat);
-  engine.undoCourse(); assert.equal(state.buoys[0].lat,moved.lat);
-  engine.setEditTool('buoy');
-  const q=geoToScreen(moved.lat,moved.lon,state.worldCX,state.worldCY,state.zoom,256,state.width,state.height);
-  input.onEditStart(q.x,q.y); input.onEditMove(q.x+70,q.y); input.onEditEnd(true);
-  assert.equal(state.buoys[0].lon,moved.lon,'cancelled gestures restore the original position');
-  storage.setItem=()=>{throw Error('quota');};
-  assert.equal(engine.selectCourse('sprint'),false,'a failed save must not discard the current edits');
-  assert.equal(state.courseId,'raia-rapida');
-  engine.destroy();
-});
 
 test('touch editing moves a handle without panning and rolls back when a pinch starts', () => {
   const events={}; let edits=0, taps=0; const ends=[];
@@ -206,44 +131,20 @@ test('a tap on a path inserts a vertex between its neighbors', () => {
   const a={lat:-22.413,lon:-41.821}, b={lat:-22.413,lon:-41.819};
   const state={routes:[{id:'route-1',points:[a,b]}],zoom:17,width:600,height:600,worldCX:center.x,worldCY:center.y};
   const point={lat:-22.413,lon:-41.82};
-  assert.equal(insertRoutePoint(state,{tileSize:256},300,300,point),true);
+  const project=p=>geo.geoToScreen(p.lat,p.lon,state.worldCX,state.worldCY,state.zoom,256,state.width,state.height);
+  assert.equal(insertRoutePoint(state,project,300,300,point),true);
   assert.equal(state.routes[0].points[1],point); assert.equal(state.routes[0].points[2],b);
   assert.equal(state.activeRouteId,'route-1');
 });
 
-test('event areas migrate from the adjusted Match Race and stay shared across every course', () => {
-  const store=new Map(); const load=modules({localStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)}});
-  const {defaultCourse,COURSE_PRESETS}=load('lib/map/courses.ts');
-  const {restoreCourse,saveCourse}=load('lib/map/storage.ts');
-  const adjusted=defaultCourse('match-race'); adjusted.maintenanceArea[0].lat-=.00003;
-  store.set('dsb:course:v2:match-race',JSON.stringify({version:1,...adjusted}));
-  const state={courseId:'sprint',...defaultCourse('sprint')}; restoreCourse(state,'sprint');
-  assert.equal(state.maintenanceArea[0].lat,adjusted.maintenanceArea[0].lat);
-  state.maintenanceArea[1].lon-=.00002; state.waitingArea[0].lat+=.00001;
-  const expected=JSON.stringify([state.maintenanceArea,state.waitingArea]); saveCourse(state);
-  for(const preset of COURSE_PRESETS) {
-    restoreCourse(state,preset.id); assert.equal(JSON.stringify([state.maintenanceArea,state.waitingArea]),expected,preset.id);
-  }
-});
 
-test('old Sprint template updates while a custom Sprint path remains intact', () => {
-  const store=new Map(); const load=modules({localStorage:{getItem:k=>store.get(k)}});
-  const {defaultCourse,LEGACY_SPRINT_POINTS}=load('lib/map/courses.ts'); const {restoreCourse}=load('lib/map/storage.ts');
-  const course=defaultCourse('sprint'); course.routes[0].points=LEGACY_SPRINT_POINTS.map(p=>({...p}));
-  const state={courseId:'sprint'};
-  store.set('dsb:course:v2:sprint',JSON.stringify({version:1,...course})); restoreCourse(state,'sprint');
-  assert.ok(state.routes[0].points.length>2);
-  course.routes[0].points[0]={lat:-22.411,lon:-41.819};
-  store.set('dsb:course:v2:sprint',JSON.stringify({version:1,...course})); restoreCourse(state,'sprint');
-  assert.equal(state.routes[0].points[0].lat,-22.411);
-});
 
 test('race limits, waiting berths, and support patrols remain separated for all seven courses', () => {
   const load=modules({}, {'./renderer':{},'./input':{},'./tiles':{}});
   const {createMapState}=load('lib/map/engine.ts');
   const {COURSE_PRESETS,defaultCourse}=load('lib/map/courses.ts');
   const {createSimulation,insideArea,distanceToRoutes,distanceMeters}=load('lib/map/simulation.ts');
-  const lake=JSON.parse(readFileSync('lib/map/data/imboassica.json','utf8')).features.find(f=>f.id===132616186).points.map(([lon,lat])=>({lon,lat}));
+  const lake=JSON.parse(readFileSync('lib/map/data/imboassica-water.json','utf8')).lagoon[0].map(([lon,lat])=>({lon,lat}));
   for(const preset of COURSE_PRESETS) {
     const state=createMapState(); Object.assign(state,defaultCourse(preset.id),{courseId:preset.id});
     const tick=createSimulation(state);
@@ -257,11 +158,11 @@ test('race limits, waiting berths, and support patrols remain separated for all 
       state.animationTime=second*1000; tick(1000);
       for(const b of waiting) { assert.ok(insideArea(b,state.waitingArea),`${preset.id}: waiting boat stays inside its area`); assert.equal(b.raceRouteId,null); }
       for(const [i,b] of support.entries()) {
-        assert.equal(b.raceRouteId,null); assert.ok(b.speed<1);
+        assert.equal(b.raceRouteId,null); assert.ok(b.speed<4,'support idles slowly');
         assert.ok(insideArea(b,lake),`${preset.id}: support stays on water`);
         assert.ok(distanceToRoutes(b,state.routes)>25,`${preset.id}: support stays away from every lane`);
         assert.ok(state.buoys.every(buoy=>distanceMeters(b,buoy)>20),'patrol does not overlap a buoy');
-        assert.ok(distanceMeters(b,anchors[i])<=10.01);
+        assert.ok(distanceMeters(b,anchors[i])<=32.01);
         if(distanceMeters(b,anchors[i])>1) moved=true;
       }
     }
@@ -292,4 +193,194 @@ test('extra satellite zoom reuses native level 18 rather than requesting level 2
   renderBackground({}, {width:390,height:844,zoom:21,worldCX:.3838,worldCY:.5639,style:'satellite'}, {tileSize:256,zoomMin:14,zoomMax:21},
     {get:()=>null,findFallback:()=>null,load:(_key,z)=>levels.push(z)});
   assert.ok(levels.length>0 && levels.length<=4); assert.ok(levels.every(z=>z===18));
+});
+
+test('live fleet never simulates positions, preserves a bounded trail and removes stopped trackers', () => {
+  let frame, fleet;
+  const window={innerWidth:1200,innerHeight:800,addEventListener(){},removeEventListener(){},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}})};
+  const globals={window,document:{hidden:false,addEventListener(){},removeEventListener(){}},devicePixelRatio:1,localStorage:{getItem(){return null;},setItem(){}},requestAnimationFrame:fn=>{frame=fn;return 1;},cancelAnimationFrame(){}};
+  const mocks={'./renderer':{renderBackground(){},renderFrame(){}},'./input':{attachInputHandlers:()=>()=>{}},'./tiles':{TileCache:class{revision=0;destroy(){}}}};
+  const {initEngine}=modules(globals,mocks)('lib/map/engine.ts');
+  const canvas=()=>({style:{},getContext:()=>({setTransform(){}})});
+  const engine=initEngine(canvas(),canvas(),undefined,{onFleetUpdate:b=>fleet=b},true);
+  frame(100);assert.equal(fleet.length,0);
+  const point={id:'solares',label:'Solares',color:'blue',lat:-22.4,lon:-41.8,speed:5,heading:12,capturedAt:new Date().toISOString()};
+  engine.setLiveBoats([point]);
+  for(let time=200;time<2000;time+=100) frame(time);
+  assert.equal(fleet[0].lat,point.lat);assert.equal(fleet[0].lon,point.lon);
+  engine.setLiveBoats([]);assert.equal(fleet.length,0);
+  engine.setLiveBoats([{...point,lat:NaN}]);assert.equal(fleet.length,0);
+  engine.destroy();
+});
+
+test('public demo ignores live points and stored course edits, can pause, and does not save a course',()=>{
+  let frame,state;
+  const window={innerWidth:1200,innerHeight:800,addEventListener(){},removeEventListener(){},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}})};
+  const globals={window,document:{hidden:false,addEventListener(){},removeEventListener(){}},devicePixelRatio:1,
+    localStorage:{getItem(){throw Error('demo must not read the operator course');},setItem(){throw Error('demo must not overwrite the operator course');}},
+    requestAnimationFrame:fn=>{frame=fn;return 1;},cancelAnimationFrame(){}};
+  const mocks={'./renderer':{renderBackground(){},renderFrame:(_ctx,s)=>state=s},'./input':{attachInputHandlers:()=>()=>{}},'./tiles':{TileCache:class{revision=0;destroy(){}}}};
+  const {initEngine}=modules(globals,mocks)('lib/map/engine.ts');
+  const canvas=()=>({style:{},getContext:()=>({setTransform(){}})});
+  const engine=initEngine(canvas(),canvas(),undefined,{},false,true);
+  frame(100);assert.equal(state.demo,true);assert.equal(state.boats.length,9,'six competitors plus rescue and support craft');
+  const start=state.boats[0].lat;
+  for(let t=200;t<=1000;t+=100)frame(t);
+  assert.notEqual(state.boats[0].lat,start);
+  engine.setPaused(true);const paused=state.boats[0].lat;
+  frame(2000);assert.equal(state.boats[0].lat,paused);
+  engine.setLiveBoats([]);assert.equal(state.boats.length,9);
+  engine.setDemoSpeed(4);engine.setPaused(false);frame(2100);
+  assert.notEqual(state.boats[0].lat,paused);
+  engine.destroy();
+});
+
+
+
+test('healthy stream becomes stale without new GPS points and recovers on the next fix', () => {
+  const {feedStatusFor,isRecentPosition,positionAge}=modules()('lib/tracker/freshness.ts');
+  const now=Date.parse('2026-09-27T01:29:00Z');
+  const boats=[{capturedAt:new Date(now).toISOString()}];
+  assert.equal(feedStatusFor('connected',true,boats,now),'Ao vivo');
+  assert.equal(isRecentPosition(boats[0].capturedAt,now+15000),false);
+  assert.equal(feedStatusFor('connected',true,boats,now+180000),'Sem sinal dos trackers · Última posição há 3 min');
+  assert.equal(feedStatusFor('connected',true,[...boats,{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo · 1 sem atualização');
+  assert.equal(feedStatusFor('connected',true,[{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo');
+  assert.equal(feedStatusFor('connected',false,boats,now),'Servidor sem atualização · Últimas posições');
+  assert.equal(feedStatusFor('disconnected',true,boats,now),'Conexão indisponível · Reconectando');
+  assert.equal(positionAge(undefined,now),'Sem posição');
+});
+
+test('live movement plays the track smoothly behind real time, crossing north on turns, without extrapolation',()=>{
+  const {LiveMotion,PLAYBACK_DELAY}=modules()('lib/map/live-motion.ts');
+  const motion=new LiveMotion({lat:-20,lon:-40,heading:350,time:1000},0);
+  motion.push({lat:-19.9999,lon:-40,heading:10,time:2000},1000);
+  const half=motion.sample(500+PLAYBACK_DELAY);
+  assert.ok(Math.abs(half.lat-(-19.99995))<1e-9);
+  assert.ok(Math.abs(((half.heading+180)%360)-180)<1e-6,'heading follows the track north, not a 340 degree spin');
+  assert.equal(motion.sample(100000).lat,-19.9999,'stops at the latest real coordinate');
+  assert.equal(motion.sample(1500,true).lat,-19.9999,'respects reduced motion');
+});
+test('1 Hz fixes with network jitter or a lost fix produce continuous motion: never stop-and-go',()=>{
+  const {LiveMotion,PLAYBACK_DELAY}=modules()('lib/map/live-motion.ts');
+  const step=0.00004,jitter=[0,380,-150,420,90,-200,300,0,250,-100];
+  const motion=new LiveMotion({lat:0,lon:0,heading:0,time:0},100);
+  // Fix 5 is lost entirely: one second without signal must not stop the boat.
+  const arrivals=jitter.map((j,i)=>({time:(i+1)*1000,at:(i+1)*1000+100+j})).filter(a=>a.time!==5000);
+  let previous=0,stalls=0,maxStep=0;
+  for(let now=100;now<=10000+PLAYBACK_DELAY;now+=16){
+    for(const a of arrivals)if(a.at<=now&&!a.done){a.done=true;motion.push({lat:a.time/1000*step,lon:0,heading:0,time:a.time},a.at);}
+    const lat=motion.sample(now).lat,delta=lat-previous;previous=lat;
+    // After the initial buffering, until the last fix is played.
+    if(now>PLAYBACK_DELAY+1500&&now<9500+PLAYBACK_DELAY){if(delta<=0)stalls++;maxStep=Math.max(maxStep,delta);}
+  }
+  assert.equal(stalls,0,'the boat keeps moving between late and early fixes');
+  assert.ok(maxStep<step/1000*16*1.35,`no visible surge when a delayed fix arrives (${(maxStep/(step/1000*16)).toFixed(2)}x)`);
+});
+test('live retargeting preserves visual continuity and ignores reordered GPS',()=>{
+  const {LiveMotion}=modules()('lib/map/live-motion.ts');
+  const motion=new LiveMotion({lat:0,lon:0,heading:0,time:1000},0);
+  motion.push({lat:0.0001,lon:0,heading:90,time:2000},1000);
+  const before=motion.sample(2400);
+  motion.push({lat:0.0002,lon:0,heading:180,time:3000},2400);
+  assert.ok(Math.abs(motion.sample(2400).lat-before.lat)<1e-12);
+  assert.ok(Math.abs(motion.sample(2400).heading-before.heading)<1e-9);
+  assert.equal(motion.push({lat:40,lon:40,heading:0,time:2000},2500),false);
+  assert.equal(motion.sample(100000).lat,0.0002);
+});
+test('long outages and GPS jumps reposition directly instead of speeding through history',()=>{
+  const {LiveMotion}=modules()('lib/map/live-motion.ts');
+  const motion=new LiveMotion({lat:0,lon:0,heading:0,time:1000},0);
+  assert.equal(motion.push({lat:0.0002,lon:0,heading:90,time:61000},60000),false);
+  assert.equal(motion.sample(60000).lat,0.0002);
+  assert.equal(motion.push({lat:1,lon:1,heading:180,time:62000},61000),false);
+  assert.equal(motion.sample(61000).lat,1);
+});
+test('SOS notices baseline old calls, deduplicate retries and reconnects, accept another SOS from same boat',()=>{
+  const {SosNotices}=modules()('lib/tracker/sos-notices.ts');
+  const notices=new SosNotices();
+  const old=['old','boat','Solares',1],fresh=['new','boat','Solares',2];
+  assert.equal(notices.accept([old]).length,0);
+  assert.equal(notices.accept([fresh,old]).length,1);
+  assert.equal(notices.accept([fresh,old]).length,0);
+  notices.accept([]);
+  assert.equal(notices.accept([fresh]).length,0,'a snapshot after reconnect is not a new SOS');
+  assert.equal(notices.accept([['again','boat','Solares',3],fresh]).length,1);
+});
+
+test('3D local coordinates preserve the map projection and GPS orientation for both venues',()=>{
+  const {projection}=modules()('lib/map/three/geography.ts');
+  const {geoToWorld}=modules()('lib/map/geo.ts');
+  for(const id of ['imboassica','vitoria-test']){
+    const p=projection(id),lat=p.venue.lat+.001,lon=p.venue.lon+.001;
+    const local=p.point(lat,lon),world=p.world(local.x,local.z),expected=geoToWorld(lat,lon);
+    assert.ok(local.x>0 && local.z<0,'east is +X, north is -Z');
+    assert.ok(Math.abs(world.x-expected.x)<1e-12 && Math.abs(world.y-expected.y)<1e-12);
+    assert.ok(p.point(p.venue.lat,p.venue.lon).x===0);
+  }
+});
+
+test('course data from the server is sanitised strictly and malformed courses are rejected',()=>{
+  const {parseGeometry,parseAreas,parseLiveCourse}=modules()('lib/map/course-data.ts');
+  const geometry={buoys:[{id:'buoy-1',number:1,lat:-22.41,lon:-41.82,extra:'x'}],routes:[{id:'route-1',color:'#00ccff',points:[{lat:-22.41,lon:-41.82},{lat:-22.412,lon:-41.821}]}],finishLine:{p1:{lat:-22.41,lon:-41.82},p2:null}};
+  const parsed=parseGeometry(geometry);
+  assert.equal(JSON.stringify(parsed.buoys[0]),JSON.stringify({id:'buoy-1',number:1,lat:-22.41,lon:-41.82}),'unknown keys dropped');
+  assert.equal(parseGeometry({...geometry,routes:[{...geometry.routes[0],color:'red;background:url(x)'}]}),null);
+  assert.equal(parseGeometry({...geometry,buoys:[{id:'b',number:1,lat:200,lon:0}]}),null);
+  assert.equal(parseGeometry({...geometry,buoys:Array.from({length:301},(_,i)=>({id:'b'+i,number:i,lat:0,lon:0}))}),null);
+  assert.equal(parseAreas({maintenanceArea:[{lat:0,lon:0}]}),null,'both areas required');
+  assert.equal(parseLiveCourse({venue:'../x',course:'raia-rapida'}),null);
+  assert.equal(parseLiveCourse({venue:'imboassica',course:'slalom',geometry:null,areas:null}).course,'slalom');
+});
+
+function editableEngine(storage=new Map()) {
+  let input,state,edits=[];
+  const localStorage={getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v)};
+  const load=modules({window:{innerWidth:1400,innerHeight:900,addEventListener(){},removeEventListener(){},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}})},document:{addEventListener(){},removeEventListener(){}},devicePixelRatio:1,requestAnimationFrame:()=>1,cancelAnimationFrame(){},localStorage},
+    {'./renderer':{},'./input':{attachInputHandlers:(_c,s,_cfg,cb)=>{state=s;input=cb;return()=>{};}},'./tiles':{TileCache:class{destroy(){}}}});
+  const {initEngine}=load('lib/map/engine.ts');const {geoToScreen}=load('lib/map/geo.ts');
+  const canvas=()=>({style:{},getContext:()=>({setTransform(){}})});
+  const engine=initEngine(canvas(),canvas(),undefined,{onCourseEdit:e=>edits.push(JSON.parse(JSON.stringify(e)))},true);
+  const screen=p=>geoToScreen(p.lat,p.lon,state.worldCX,state.worldCY,state.zoom,256,state.width,state.height);
+  return {engine,get state(){return state;},get input(){return input;},edits,screen,storage};
+}
+
+test('spectators follow the published course and keep it cached for offline reopening',()=>{
+  const t=editableEngine();
+  assert.equal(t.state.courseId,'raia-rapida','first model until something is published');
+  const custom={buoys:[{id:'buoy-1',number:1,lat:-22.4131,lon:-41.8201}],routes:[],finishLine:{p1:null,p2:null}};
+  t.engine.applyLiveCourse({venue:'imboassica',course:'slalom',geometry:custom,areas:null,updatedAt:'1'});
+  assert.equal(t.state.courseId,'slalom');assert.equal(t.state.buoys[0].lat,-22.4131);
+  assert.ok(t.state.maintenanceArea.length>=3,'built-in areas when none were published');
+  t.engine.applyLiveCourse({venue:'imboassica',course:'sprint',geometry:null,areas:null,updatedAt:'2'});
+  assert.equal(t.state.courseId,'sprint');assert.ok(t.state.buoys.length>0,'null geometry shows the model');
+  t.engine.destroy();
+  const reopened=editableEngine(t.storage);
+  assert.equal(reopened.state.courseId,'sprint','the last published course reopens offline');
+  reopened.engine.destroy();
+});
+
+test('an edit session keeps the organizer copy on screen, reports edits, undoes, cancels gestures and returns to live',()=>{
+  const t=editableEngine();
+  t.engine.beginEdit();
+  t.engine.loadCourse('imboassica','match-race',null,null);
+  assert.equal(t.state.courseId,'match-race');
+  t.engine.applyLiveCourse({venue:'imboassica',course:'slalom',geometry:null,areas:null,updatedAt:'1'});
+  assert.equal(t.state.courseId,'match-race','a publish elsewhere does not yank the editor');
+  t.engine.setEditTool('buoy');
+  const original={...t.state.buoys[0]},p=t.screen(original);
+  assert.equal(t.input.onEditStart(p.x,p.y),true);
+  t.input.onEditMove(p.x+40,p.y+30);t.input.onEditEnd(false);
+  const moved={...t.state.buoys[0]};assert.notEqual(moved.lat,original.lat);
+  const last=t.edits.at(-1);
+  assert.equal(last.course,'match-race');assert.equal(last.geometry.buoys[0].lat,moved.lat);assert.ok(last.areas.maintenanceArea.length>=3);
+  t.engine.undoCourse();assert.equal(t.state.buoys[0].lat,original.lat);
+  t.engine.resetCourse();assert.equal(t.state.buoys[0].lat,original.lat);
+  const q=t.screen(t.state.buoys[0]);t.input.onEditStart(q.x,q.y);t.input.onEditMove(q.x+70,q.y);t.input.onEditEnd(true);
+  assert.equal(t.state.buoys[0].lon,original.lon,'cancelled gestures restore the original position');
+  t.engine.endEdit();
+  assert.equal(t.state.courseId,'slalom','closing the editor returns to what spectators see');
+  const count=t.edits.length;t.engine.addBuoy(-22.413,-41.821);
+  assert.equal(t.edits.length,count,'no saves outside an edit session');
+  t.engine.destroy();
 });

@@ -1,13 +1,20 @@
+import type { RaceScene } from './three/scene';
+import type { LightMode } from './three/lighting';
+import { LiveMotion } from './live-motion';
+import { isRecentPosition } from '../tracker/freshness';
 import type { MapState, MapConfig, Buoy, Boat, EditTool, BoatType } from './types';
 import { geoToWorld, geoToScreen, screenToGeo, bearing } from './geo';
 import { TileCache } from './tiles';
 import { renderFrame, renderBackground } from './renderer';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
-import { restoreCourse, saveCourse, validCourseId } from './storage';
-import { COURSE_PRESETS, copyCourse, defaultCourse, type Course } from './courses';
-import { pickHandle, insertRoutePoint } from './editing';
+import { readCachedCourse, cacheCourse } from './storage';
+import type { CourseGeometry, EventAreas, LiveCourse } from './course-data';
+import { COURSE_PRESETS, copyCourse, defaultCourse, MAINTENANCE_AREA, WAITING_AREA, type Course } from './courses';
+import { pickHandle, insertRoutePoint, type Projector } from './editing';
+import { venueById, emptyCourse } from './venues';
 import { createSimulation } from './simulation';
+import { logoUrl } from './logos';
 
 // Demo route (circular path)
 export const DEMO_ROUTE: [number, number][] = [
@@ -18,18 +25,18 @@ export const DEMO_ROUTE: [number, number][] = [
   [-22.412, -41.8226], [-22.4132, -41.8216], [-22.4142, -41.82],
 ];
 
-export const BOAT_DEFS: { id: string; label: string; type: BoatType; hull: string; accent: string; baseSpeed: number; startOffset: number }[] = [
+export const BOAT_DEFS: { id: string; label: string; type: BoatType; motors?: number; logo?: string; hull: string; accent: string; baseSpeed: number; startOffset: number }[] = [
   // Competidores
-  { id: 'b1', label: 'Barco 1', type: 'cat',  hull: '#ffffff', accent: '#187cc1', baseSpeed: 8.5, startOffset: 0 },
-  { id: 'b2', label: 'Barco 2', type: 'mono', hull: '#ffe066', accent: '#d7a02a', baseSpeed: 7.8, startOffset: 0.06 },
-  { id: 'b3', label: 'Barco 3', type: 'cat',  hull: '#ff6666', accent: '#d36551', baseSpeed: 9.0, startOffset: 0.12 },
-  { id: 'b4', label: 'Barco 4', type: 'mono', hull: '#66ff99', accent: '#328868', baseSpeed: 7.2, startOffset: 0.18 },
-  { id: 'b5', label: 'Barco 5', type: 'cat',   hull: '#cc99ff', accent: '#8c70b6', baseSpeed: 8.0, startOffset: 0.24 },
-  { id: 'b6', label: 'Barco 6', type: 'mono', hull: '#ffffff', accent: '#d88039',    baseSpeed: 8.2, startOffset: 0.30 },
+  { id: 'b1', label: 'Solares', logo: 'solares.webp', type: 'cat', motors: 2, hull: '#ffffff', accent: '#2f86ff', baseSpeed: 8.5, startOffset: 0 },
+  { id: 'b2', label: 'Arariboia', logo: 'arariboia.webp', type: 'mono', motors: 1, hull: '#ffe066', accent: '#ffc629', baseSpeed: 7.8, startOffset: 0.06 },
+  { id: 'b3', label: 'Babitonga', logo: 'babitonga.webp', type: 'cat', motors: 3, hull: '#ff6666', accent: '#ff4d4f', baseSpeed: 9.0, startOffset: 0.12 },
+  { id: 'b4', label: 'Abissol', logo: 'abissol.webp', type: 'mono', motors: 2, hull: '#66ff99', accent: '#7bd63a', baseSpeed: 7.2, startOffset: 0.18 },
+  { id: 'b5', label: 'Hefesto', logo: 'hefesto.webp', type: 'cat', motors: 1,  hull: '#cc99ff', accent: '#a371ff', baseSpeed: 8.0, startOffset: 0.24 },
+  { id: 'b6', label: 'Albardão', logo: 'albardao.webp', type: 'mono', motors: 3, hull: '#ffffff', accent: '#ff7a1f',    baseSpeed: 8.2, startOffset: 0.30 },
   // Suporte
-  { id: 's1', label: 'Jet Ski Resgate', type: 'jetski',  hull: '#ff4444', accent: '#d36551', baseSpeed: 12.0, startOffset: 0.40 },
-  { id: 's2', label: 'Barco Suporte',   type: 'support', hull: '#f0f0f0', accent: '#ff6600', baseSpeed: 10.0, startOffset: 0.55 },
-  { id: 's3', label: 'Jet Ski Resgate 2', type: 'jetski', hull: '#ff4444', accent: '#d36551', baseSpeed: 11.5, startOffset: 0.70 },
+  { id: 's1', label: 'Jet Ski Resgate', type: 'jetski',  hull: '#f4f6f7', accent: '#aab4bc', baseSpeed: 12.0, startOffset: 0.40 },
+  { id: 's2', label: 'Barco Suporte',   type: 'support', hull: '#f0f0f0', accent: '#aab4bc', baseSpeed: 10.0, startOffset: 0.55 },
+  { id: 's3', label: 'Jet Ski Resgate 2', type: 'jetski', hull: '#f4f6f7', accent: '#aab4bc', baseSpeed: 11.5, startOffset: 0.70 },
 ];
 
 const BUOY_HIT_RADIUS = 20;
@@ -44,20 +51,39 @@ export interface BoatScreenInfo {
   speed: number;
   isFollowed: boolean;
   accentColor: string;
+  /** On-screen hull length in pixels, to keep labels clear of the boat. */
+  size: number;
 }
 
 export interface EngineCallbacks {
+  on3DFallback?: () => void;
   onCourseChange?: (id: string, canUndo: boolean) => void;
   onSelectionChange?: (boatId: string | null) => void;
   onFleetUpdate?: (boats: Boat[]) => void;
-  onSaveStatus?: (saved: boolean) => void;
+  /** Organization edits, to be saved to the server (only while an edit session is open). */
+  onCourseEdit?: (edit: {venue: string; course: string; geometry: CourseGeometry; areas: EventAreas}) => void;
   onTelemetryUpdate?: (boatId: string, lat: number, lon: number, speed: number, heading: number) => void;
   onBuoysChange?: (buoys: Buoy[]) => void;
   onBoatPositions?: (boats: BoatScreenInfo[]) => void;
+  /** 3D camera heading/tilt each frame (null in the flat view), e.g. for a compass. */
+  onView?: (heading: number | null, tilted: boolean) => void;
 }
 
+export interface LiveBoat { id: string; label: string; color: string; hull?: 'cat' | 'mono'; motors?: number; logo?: string; lat: number; lon: number; speed: number | null; heading: number | null; capturedAt: string; }
 export interface EngineAPI {
-  selectCourse: (id: string) => boolean;
+  set3D: (canvas:HTMLCanvasElement|null) => Promise<boolean>;
+  setLighting: (mode:LightMode) => void;
+  setPhotographic: (enabled:boolean) => void;
+  setDemoSpeed: (speed:number) => void;
+  resetView: () => void;
+  selectVenue: (id: string) => void;
+  setLiveBoats: (boats: LiveBoat[]) => void;
+  /** Course published by the organization: shown unless an edit session is open. */
+  applyLiveCourse: (course: LiveCourse) => void;
+  /** Organization editing: load any stored course without affecting what spectators see. */
+  beginEdit: () => void;
+  endEdit: () => void;
+  loadCourse: (venue: string, course: string, geometry: CourseGeometry | null, areas: EventAreas | null) => void;
   resetCourse: () => void;
   undoCourse: () => void;
   fit: (padding?: Partial<Record<'left' | 'right' | 'top' | 'bottom', number>>) => void;
@@ -94,6 +120,8 @@ function createBoats(): Boat[] {
       id: def.id,
       label: def.label,
       type: def.type,
+      motors: def.motors,
+      logo: logoUrl(def.logo),
       hullColor: def.hull,
       accentColor: def.accent,
       lat: from[0] + (to[0] - from[0]) * localT,
@@ -120,6 +148,8 @@ export function createMapState(config: MapConfig = DEFAULT_CONFIG): MapState {
     zoom: 17,
     worldCX: start.x,
     worldCY: start.y,
+    bearing: 0,
+    pitch: null,
     dragging: false,
     dragX: 0,
     dragY: 0,
@@ -141,11 +171,34 @@ export function initEngine(
   background: HTMLCanvasElement,
   config: MapConfig = DEFAULT_CONFIG,
   callbacks: EngineCallbacks = {},
+  live = false,
+  presentationDemo = false,
 ): EngineAPI {
   const ctx = canvas.getContext('2d')!;
   const backgroundCtx = background.getContext('2d', { alpha: false })!;
   const state = createMapState(config);
-  restoreCourse(state);
+  state.demo=!live;
+  state.venueId = 'imboassica';
+  // The course on screen is the one published by the organization (cached for offline).
+  let liveCourse: LiveCourse = {venue: 'imboassica', course: COURSE_PRESETS[0].id, geometry: null, areas: null, updatedAt: ''};
+  let editingSession = false;
+  function resolveCourse(c: LiveCourse): Course {
+    const base = c.venue === 'imboassica' ? defaultCourse(c.course) : {...emptyCourse(), waitingArea: []};
+    const geometry = c.geometry ?? {buoys: base.buoys, routes: base.routes, finishLine: base.finishLine};
+    const areas = c.areas ?? (c.venue === 'imboassica'
+      ? {maintenanceArea: MAINTENANCE_AREA.map(p => ({...p})), waitingArea: WAITING_AREA.map(p => ({...p}))}
+      : {maintenanceArea: [], waitingArea: []});
+    return copyCourse({...geometry, ...areas});
+  }
+  if (!presentationDemo) liveCourse = readCachedCourse() ?? liveCourse;
+  Object.assign(state, resolveCourse(liveCourse));
+  state.venueId = liveCourse.venue; state.courseId = liveCourse.course;
+  if (live) state.boats = [];
+  const liveMotion = new Map<string,LiveMotion>();
+  let view3D:RaceScene|null=null;
+  let viewGeneration=0;
+  let lighting:LightMode='live';
+  let photographic=true,demoSpeed=1;
   let tickSimulation = createSimulation(state);
   let simulatedCourseId = state.courseId;
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -165,12 +218,16 @@ export function initEngine(
       if (history.length > 30) history.shift();
     }
     previousCourse = nextCourse;
-    if (changed || simulatedCourseId !== state.courseId) {
+    if (!live && (changed || simulatedCourseId !== state.courseId)) {
       tickSimulation = createSimulation(state);
       simulatedCourseId = state.courseId;
       callbacks.onFleetUpdate?.(state.boats.map(b => ({...b, trail: []})));
     }
-    callbacks.onSaveStatus?.(saveCourse(state));
+    if (!presentationDemo && editingSession && changed) callbacks.onCourseEdit?.({
+      venue: state.venueId ?? 'imboassica', course: state.courseId,
+      geometry: {buoys: state.buoys, routes: state.routes, finishLine: state.finishLine},
+      areas: {maintenanceArea: state.maintenanceArea, waitingArea: state.waitingArea},
+    });
     notifyCourse();
   }
   notifyCourse();
@@ -232,13 +289,25 @@ export function initEngine(
     nextBuoyNumber = state.buoys.length + 1;
   }
 
+  /** Replace the course on screen; refit the camera only when it is a different course. */
+  function showCourse(c: LiveCourse, refit: boolean) {
+    const venueChanged = state.venueId !== c.venue;
+    state.venueId = c.venue; state.courseId = c.course;
+    Object.assign(state, resolveCourse(c));
+    state.activeRouteId = null; state.editTool = editingSession ? state.editTool : null;
+    buoyIdCounter = Math.max(0, ...state.buoys.map(b => Number(b.id.split('-').pop()) || 0));
+    routeIdCounter = Math.max(0, ...state.routes.map(r => Number(r.id.split('-').pop()) || 0));
+    renumberBuoys();
+    history.length = 0; previousCourse = copyCourse(state);
+    if (refit || venueChanged) { state.boats.forEach(b => { b.trail = []; }); fit(); }
+    if (!live) { tickSimulation = createSimulation(state); simulatedCourseId = state.courseId; }
+    sceneRevision++; notifyCourse();
+  }
+
   function hitTestBuoy(screenX: number, screenY: number): Buoy | null {
     for (let i = state.buoys.length - 1; i >= 0; i--) {
       const b = state.buoys[i];
-      const p = geoToScreen(
-        b.lat, b.lon, state.worldCX, state.worldCY,
-        state.zoom, config.tileSize, state.width, state.height,
-      );
+      const p = toScreen(b);
       const dx = p.x - screenX;
       const dy = p.y - screenY;
       if (dx * dx + dy * dy <= BUOY_HIT_RADIUS * BUOY_HIT_RADIUS) return b;
@@ -249,7 +318,7 @@ export function initEngine(
   function hitTestBoat(screenX: number, screenY: number): Boat | null {
     for (let i = state.boats.length - 1; i >= 0; i--) {
       const boat = state.boats[i];
-      const p = geoToScreen(
+      const p = view3D?.project(boat.lat,boat.lon,state) ?? geoToScreen(
         boat.lat, boat.lon, state.worldCX, state.worldCY,
         state.zoom, config.tileSize, state.width, state.height,
       );
@@ -303,8 +372,9 @@ export function initEngine(
     const left = padding.left ?? (mobile ? 24 : 310), right = padding.right ?? (mobile ? 66 : 90);
     const top = padding.top ?? (mobile ? 90 : 70), bottom = padding.bottom ?? (mobile ? 180 : 90);
     const points = [...state.buoys, ...state.routes.flatMap(r => r.points), ...state.maintenanceArea, ...state.waitingArea, ...[state.finishLine.p1, state.finishLine.p2].filter(p => p !== null)];
-    const nw = points.length ? geoToWorld(Math.max(...points.map(p => p.lat)) + .00025, Math.min(...points.map(p => p.lon)) - .00025) : geoToWorld(-22.4076, -41.824);
-    const se = points.length ? geoToWorld(Math.min(...points.map(p => p.lat)) - .00025, Math.max(...points.map(p => p.lon)) + .00025) : geoToWorld(-22.4152, -41.8136);
+    const venue = venueById(state.venueId);
+    const nw = points.length ? geoToWorld(Math.max(...points.map(p => p.lat)) + .00025, Math.min(...points.map(p => p.lon)) - .00025) : geoToWorld(venue.lat + .003, venue.lon - .003);
+    const se = points.length ? geoToWorld(Math.min(...points.map(p => p.lat)) - .00025, Math.max(...points.map(p => p.lon)) + .00025) : geoToWorld(venue.lat - .003, venue.lon + .003);
     const width = Math.max(170, state.width - left - right);
     const height = Math.max(180, state.height - top - bottom);
     state.zoom = Math.max(config.zoomMin, Math.min(config.zoomMax,
@@ -321,17 +391,27 @@ export function initEngine(
   let draggedHandle: ReturnType<typeof pickHandle> = null;
   let dragOriginal: {lat: number; lon: number} | null = null;
 
+  // Screen <-> geographic coordinates in whichever view is active (flat chart or 3D camera).
+  const toScreen: Projector = p => view3D?.project(p.lat, p.lon, state) ?? geoToScreen(p.lat, p.lon, state.worldCX, state.worldCY, state.zoom, config.tileSize, state.width, state.height);
+  function toGeo(x: number, y: number) {
+    if (!view3D) return screenToGeo(x, y, state.worldCX, state.worldCY, state.zoom, config.tileSize, state.width, state.height);
+    const w = view3D.screenWorld(x, y, state);
+    return w ? {lon: w.x * 360 - 180, lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * w.y))) * 180 / Math.PI} : null;
+  }
+
   // --- Input ---
   const detachInput = attachInputHandlers(canvas, state, config, {
+    screenToWorld(x,y){return view3D?.screenWorld(x,y,state)??null;},
+    canOrient(){return !!view3D;},
     onEditStart(x, y) {
-      draggedHandle = pickHandle(state, config, x, y);
+      draggedHandle = pickHandle(state, toScreen, x, y);
       dragOriginal = draggedHandle ? {...draggedHandle.point} : null;
       return !!draggedHandle;
     },
     onEditMove(x, y) {
       if (!draggedHandle) return;
-      const p = screenToGeo(x, y, state.worldCX, state.worldCY, state.zoom, config.tileSize, state.width, state.height);
-      Object.assign(draggedHandle.point, p);
+      const p = toGeo(x, y);
+      if (p) Object.assign(draggedHandle.point, p);
       if (draggedHandle.routeId) state.activeRouteId = draggedHandle.routeId;
       sceneRevision++;
     },
@@ -352,10 +432,8 @@ export function initEngine(
         return;
       }
 
-      const geo = screenToGeo(
-        screenX, screenY, state.worldCX, state.worldCY,
-        state.zoom, config.tileSize, state.width, state.height,
-      );
+      const geo = toGeo(screenX, screenY);
+      if (!geo) return;
 
       switch (state.editTool) {
         case 'buoy': {
@@ -365,7 +443,7 @@ export function initEngine(
           break;
         }
         case 'finish': {
-          if (pickHandle(state, config, screenX, screenY)) return;
+          if (pickHandle(state, toScreen, screenX, screenY)) return;
           if (!state.finishLine.p1) {
             state.finishLine.p1 = { lat: geo.lat, lon: geo.lon };
           } else if (!state.finishLine.p2) {
@@ -377,19 +455,19 @@ export function initEngine(
           break;
         }
         case 'maintenance': {
-          if (pickHandle(state, config, screenX, screenY)) return;
+          if (pickHandle(state, toScreen, screenX, screenY)) return;
           state.maintenanceArea.push({ lat: geo.lat, lon: geo.lon });
           break;
         }
         case 'waiting': {
-          if (pickHandle(state, config, screenX, screenY)) return;
+          if (pickHandle(state, toScreen, screenX, screenY)) return;
           if (state.waitingArea.length < 300) state.waitingArea.push(geo);
           break;
         }
         case 'route': {
-          const handle = pickHandle(state, config, screenX, screenY);
+          const handle = pickHandle(state, toScreen, screenX, screenY);
           if (handle?.routeId) { state.activeRouteId = handle.routeId; sceneRevision++; return; }
-          if (insertRoutePoint(state, config, screenX, screenY, geo)) break;
+          if (insertRoutePoint(state, toScreen, screenX, screenY, geo)) break;
           ensureActiveRoute(currentRouteColor);
           const route = getActiveRoute();
           if (route && route.points.length < 2000) route.points.push({ lat: geo.lat, lon: geo.lon });
@@ -405,6 +483,7 @@ export function initEngine(
   const TRAIL_INTERVAL = 400; // 2.5 samples per second, capped at 100 points per boat
 
   function tick(dt: number) {
+    if (live) return;
     tickSimulation(dt);
 
     // Trail points at fixed interval (not every frame)
@@ -451,7 +530,9 @@ export function initEngine(
 
   function frame(time: number) {
     if (!running) return;
-    const interval = state.reducedMotion ? 1000 / 15 : 1000 / 30;
+    const interpolating=live && [...liveMotion.values()].some(m=>m.isMoving(time));
+    const fps=state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30;
+    const interval = 1000 / fps;
     if (lastTime && time - lastTime < interval - 1) {
       rafId = requestAnimationFrame(frame);
       return;
@@ -460,10 +541,16 @@ export function initEngine(
     lastTime = time;
 
     if (!state.paused) {
-      state.animationTime += dt;
-      tick(dt);
+      const elapsed=live?dt:dt*demoSpeed;
+      state.animationTime += elapsed;
+      tick(elapsed);
+    }
+    if(live)for(const boat of state.boats){
+      const pose=liveMotion.get(boat.id)?.sample(time,state.reducedMotion);
+      if(pose){boat.lat=pose.lat;boat.lon=pose.lon;boat.heading=pose.heading;}
     }
     followCamera();
+    if(!view3D){
     const key = `${viewportRevision}/${state.width}/${state.height}/${state.zoom}/${state.style}`;
     const scale = 2 ** state.zoom * config.tileSize;
     let offsetX = (backgroundCX - state.worldCX) * scale;
@@ -480,6 +567,8 @@ export function initEngine(
     const sceneChanged = !state.paused || sceneKey !== previousSceneKey;
     if (sceneChanged) renderFrame(ctx, state, config);
     previousSceneKey = sceneKey;
+    }else {view3D.render(state,config,time);view3D.renderOverlay(ctx,state);}
+    callbacks.onView?.(view3D?view3D.heading:null,!!view3D&&(Math.abs(view3D.tilt-(state.followBoatId?63:74))>1||state.pitch!==null));
     if (lastSelection !== state.followBoatId) {
       lastSelection = state.followBoatId;
       callbacks.onSelectionChange?.(lastSelection);
@@ -490,10 +579,11 @@ export function initEngine(
     }
 
     // Emit boat screen positions for DOM labels
-    if (sceneChanged && callbacks.onBoatPositions) {
+    if (callbacks.onBoatPositions) {
       const infos: BoatScreenInfo[] = [];
+      const size = view3D ? view3D.boatPixels() : 44;
       for (const boat of state.boats) {
-        const p = geoToScreen(
+        const p = view3D?.project(boat.lat,boat.lon,state) ?? geoToScreen(
           boat.lat, boat.lon, state.worldCX, state.worldCY,
           state.zoom, config.tileSize, state.width, state.height,
         );
@@ -501,7 +591,7 @@ export function initEngine(
           id: boat.id, label: boat.label, type: boat.type,
           x: p.x, y: p.y, speed: boat.speed,
           isFollowed: boat.id === state.followBoatId,
-          accentColor: boat.accentColor,
+          accentColor: boat.accentColor, size,
         });
       }
       callbacks.onBoatPositions(infos);
@@ -512,28 +602,78 @@ export function initEngine(
 
   function visibility() {
     cancelAnimationFrame(rafId);
-    lastTime = 0;
+    lastTime = 0;view3D?.resetClock();
     if (!document.hidden && running) rafId = requestAnimationFrame(frame);
   }
   document.addEventListener('visibilitychange', visibility);
   rafId = requestAnimationFrame(frame);
 
   return {
-    selectCourse(id) {
-      if (!validCourseId(id)) return false;
-      if (!saveCourse(state)) { callbacks.onSaveStatus?.(false); return false; }
-      restoreCourse(state, id);
-      history.length = 0;
-      state.activeRouteId = null; state.editTool = null;
-      buoyIdCounter = Math.max(0, ...state.buoys.map(b => Number(b.id.split('-').pop()) || 0));
-      routeIdCounter = Math.max(0, ...state.routes.map(r => Number(r.id.split('-').pop()) || 0));
-      recycledNumbers.length = 0;
-      nextBuoyNumber = Math.max(0, ...state.buoys.map(b => b.number)) + 1;
-      state.boats.forEach(b => { b.trail = []; });
-      fit(); persist(false);
-      return true;
+    async set3D(target) {
+      const generation=++viewGeneration;
+      view3D?.dispose();view3D=null;previousSceneKey='';backgroundKey='';
+      if(!target)return false;
+      try{
+        const {RaceScene}=await import('./three/scene');
+        if(!running || generation!==viewGeneration)return false;
+        view3D=new RaceScene(target,()=>{view3D?.dispose();view3D=null;backgroundKey='';callbacks.on3DFallback?.();},tiles);
+        view3D.setLighting(lighting);view3D.setPhotographic(photographic);return true;
+      }catch{callbacks.on3DFallback?.();return false;}
     },
-    resetCourse() { Object.assign(state, defaultCourse(state.courseId), {maintenanceArea: state.maintenanceArea, waitingArea: state.waitingArea}); state.activeRouteId = null; renumberBuoys(); fit(); persist(); },
+    setLighting(mode){lighting=mode;view3D?.setLighting(mode);},
+    setPhotographic(enabled){photographic=enabled;view3D?.setPhotographic(enabled);},
+    setDemoSpeed(speed){demoSpeed=[1,2,4].includes(speed)?speed:1;},
+    resetView(){state.bearing=0;state.pitch=null;},
+    selectVenue(id) {
+      const venue = venueById(id);
+      if (venue.id === state.venueId) return;
+      // Another venue: its published course if it is the live one, otherwise its model.
+      showCourse(liveCourse.venue === venue.id ? liveCourse : {venue: venue.id, course: venue.id === 'imboassica' ? COURSE_PRESETS[0].id : 'custom', geometry: null, areas: null, updatedAt: ''}, true);
+      callbacks.onSelectionChange?.(null);
+    },
+    setLiveBoats(updates) {
+      if (!live) return;
+      const palette: Record<string,string> = {blue:'#2f86ff',purple:'#a371ff',green:'#7bd63a',orange:'#ff7a1f',red:'#ff4d4f',yellow:'#ffc629',gold:'#ffc629',cyan:'#41d6f5'};
+      const now=performance.now();
+      state.boats = updates.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat)<85 && Math.abs(p.lon)<=180).map(p => {
+        const old = state.boats.find(b => b.id === p.id);
+        if(old && Date.parse(p.capturedAt)<Date.parse(old.capturedAt ?? ''))return old;
+        let animator=liveMotion.get(p.id);
+        const fix={lat:p.lat,lon:p.lon,heading:p.heading ?? old?.heading ?? 0,time:Date.parse(p.capturedAt)};
+        let continuous=true;
+        if(animator){if(old?.capturedAt!==p.capturedAt)continuous=animator.push(fix,now);}
+        else {animator=new LiveMotion(fix,now);liveMotion.set(p.id,animator);}
+        const pose=animator.sample(now,state.reducedMotion);
+        const trail = old && continuous ? [...old.trail] : [];
+        if (old && continuous && old.capturedAt !== p.capturedAt) trail.push([old.lat,old.lon]);
+        return {id:p.id,label:p.label,lat:pose.lat,lon:pose.lon,capturedAt:p.capturedAt,
+          type:p.hull ?? 'cat',motors:p.motors ?? 1,logo:logoUrl(p.logo),activity:'racing',raceRouteId:null,hullColor:'#ffffff',accentColor:palette[p.color] || palette.blue,
+          heading:pose.heading,headingTarget:p.heading ?? old?.heading ?? 0,
+          speed:isRecentPosition(p.capturedAt) ? (p.speed ?? 0) : 0,speedKnown:p.speed!==null,
+          baseSpeed:0,speedPhaseOffset:0,routeIndex:0,routeT:0,trail:trail.slice(-config.maxTrailLength)};
+      });
+      for(const id of liveMotion.keys())if(!state.boats.some(b=>b.id===id))liveMotion.delete(id);
+      if (!state.boats.some(b=>b.id===state.followBoatId)) state.followBoatId=null;
+      sceneRevision++;
+      callbacks.onFleetUpdate?.(state.boats.map(b=>({...b,trail:[]})));
+    },
+    applyLiveCourse(course) {
+      if (presentationDemo) return;
+      const moved = course.venue !== liveCourse.venue || course.course !== liveCourse.course;
+      liveCourse = course; cacheCourse(course);
+      // An open edit session keeps the organizer's working copy on screen.
+      if (!editingSession) showCourse(course, moved);
+    },
+    beginEdit() { editingSession = true; },
+    endEdit() {
+      editingSession = false; state.editTool = null;
+      const moved = liveCourse.venue !== state.venueId || liveCourse.course !== state.courseId;
+      showCourse(liveCourse, moved);
+    },
+    loadCourse(venue, course, geometry, areas) {
+      showCourse({venue, course, geometry, areas, updatedAt: ''}, true);
+    },
+    resetCourse() { Object.assign(state, copyCourse({...resolveCourse({venue: state.venueId ?? 'imboassica', course: state.courseId, geometry: null, areas: null, updatedAt: ''}), maintenanceArea: state.maintenanceArea, waitingArea: state.waitingArea})); state.activeRouteId = null; renumberBuoys(); persist(); },
     undoCourse() {
       const previous = history.pop();
       if (!previous) return;
@@ -579,7 +719,7 @@ export function initEngine(
     },
     clearAllRoutes() { state.routes = []; state.activeRouteId = null; persist(); },
     destroy() {
-      running = false;
+      running = false;viewGeneration++;view3D?.dispose();view3D=null;
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', resize);
       detachInput();

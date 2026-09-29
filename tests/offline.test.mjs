@@ -80,3 +80,12 @@ test('optional satellite cache is bounded and usable offline', async () => {
   await h.event('fetch',{request: h.fetchRequest('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/16/100/124')});
   assert.equal(h.network.length, before);
 });
+
+test('optional 3D chunks are not installed eagerly and are cached after first use',async()=>{
+ const h=harness();await h.event('install');
+ const path='/_next/static/chunks/optional-3d.js';
+ assert.equal((await h.caches.open('dsb-shell-test')).match(path) instanceof Promise,true);
+ assert.equal(await (await h.caches.open('dsb-shell-test')).match(path),undefined);
+ await h.event('fetch',{request:h.fetchRequest(path)});assert.equal(h.network.length,1);
+ await h.event('fetch',{request:h.fetchRequest(path)});assert.equal(h.network.length,1);
+});

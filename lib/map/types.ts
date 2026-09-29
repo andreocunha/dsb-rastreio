@@ -50,11 +50,17 @@ export const ROUTE_COLORS: { id: string; hex: string; label: string }[] = [
 export type BoatType = 'mono' | 'cat' | 'arrow' | 'jetski' | 'support';
 
 export interface Boat {
+  capturedAt?: string;
+  speedKnown?: boolean;
   activity: 'racing' | 'waiting' | 'support';
   raceRouteId: string | null;
   id: string;
   label: string;
   type: BoatType;
+  /** Outboard motors (1–3): drawn on the hull and as separate wake streams. */
+  motors?: number;
+  /** Team logo URL, when the team has one. */
+  logo?: string;
   hullColor: string;
   accentColor: string;
   lat: number;
@@ -72,6 +78,8 @@ export interface Boat {
 export type EditTool = 'buoy' | 'finish' | 'maintenance' | 'waiting' | 'route' | null;
 
 export interface MapState {
+  demo?: boolean;
+  venueId?: string;
   style: 'chart' | 'satellite';
   paused: boolean;
   reducedMotion: boolean;
@@ -83,6 +91,10 @@ export interface MapState {
   zoom: number;
   worldCX: number;
   worldCY: number;
+  /** 3D camera heading in degrees clockwise from north (0 = north up). */
+  bearing: number;
+  /** 3D camera pitch in degrees above the horizon; null follows the automatic view. */
+  pitch: number | null;
 
   // Interaction
   dragging: boolean;

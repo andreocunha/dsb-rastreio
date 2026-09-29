@@ -1,4 +1,6 @@
+import { renderTestChart } from './test-chart';
 import geography from './data/imboassica.json';
+import water from './data/imboassica-water.json';
 import { geoToWorld, worldScale } from './geo';
 import type { MapConfig, MapState } from './types';
 
@@ -24,18 +26,18 @@ let lake: Path2D;
 
 function prepare() {
   if (shapes) return;
-  shapes = geography.features.filter(f => f.kind !== 'coastline').map(f => ({
+  shapes = geography.features.filter(f => f.kind !== 'coastline' && f.kind !== 'water').map(f => ({
     kind: f.kind, major: f.major, path: makePath(f.points, f.kind !== 'road'),
   }));
-  const coastPoints = geography.features.filter(f => f.kind === 'coastline')
-    .sort((a, b) => a.points[0][0] - b.points[0][0]).flatMap(f => f.points);
-  coast = makePath(coastPoints);
-  sea = makePath([...coastPoints, [-41.7, -22.35], [-41.7, -22.55], [-41.95, -22.55]], true);
-  lake = makePath(geography.features.find(f => f.id === 132616186)!.points, true);
+  // Shorelines are traced from the satellite imagery, so both map styles agree.
+  sea = new Path2D(); for (const p of water.ocean) sea.addPath(makePath(p, true));
+  coast = sea;
+  lake = new Path2D(); for (const p of water.lagoon) lake.addPath(makePath(p, true));
 }
 
 /** A local geographic chart. No map requests, bitmap downloads or runtime dependencies. */
 export function renderChart(ctx: CanvasRenderingContext2D, state: MapState, config: MapConfig) {
+  if(state.venueId === 'vitoria-test') {renderTestChart(ctx,state,config);return;}
   prepare();
   const scale = worldScale(state.zoom, config.tileSize);
   const factor = scale / SCALE;
@@ -75,24 +77,21 @@ export function renderChart(ctx: CanvasRenderingContext2D, state: MapState, conf
   ctx.strokeStyle = '#f8f2df';
   ctx.lineWidth = 7;
   ctx.stroke(coast);
-  for (const s of shapes!) {
-    if (s.kind !== 'water') continue;
-    ctx.strokeStyle = '#ccdabb';
-    ctx.lineWidth = 14;
-    ctx.stroke(s.path);
-    ctx.strokeStyle = '#dce9d2';
-    ctx.lineWidth = 7;
-    ctx.stroke(s.path);
-    const water = ctx.createLinearGradient(-550, -200, 600, 450);
-    water.addColorStop(0, '#6aaea3');
-    water.addColorStop(0.5, '#499b96');
-    water.addColorStop(1, '#73b2a6');
-    ctx.fillStyle = water;
-    ctx.fill(s.path);
-    ctx.strokeStyle = '#a6cec0';
-    ctx.lineWidth = 2.5;
-    ctx.stroke(s.path);
-  }
+  ctx.strokeStyle = '#ccdabb';
+  ctx.lineWidth = 14;
+  ctx.stroke(lake);
+  ctx.strokeStyle = '#dce9d2';
+  ctx.lineWidth = 7;
+  ctx.stroke(lake);
+  const fill = ctx.createLinearGradient(-550, -200, 600, 450);
+  fill.addColorStop(0, '#6aaea3');
+  fill.addColorStop(0.5, '#499b96');
+  fill.addColorStop(1, '#73b2a6');
+  ctx.fillStyle = fill;
+  ctx.fill(lake);
+  ctx.strokeStyle = '#a6cec0';
+  ctx.lineWidth = 2.5;
+  ctx.stroke(lake);
 
   // Fine, fixed water texture, painted only when the camera changes.
   ctx.save();

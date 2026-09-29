@@ -32,7 +32,7 @@ for way in root.findall('way'):
     pts=simplify([nodes[n] for n in refs])
     features.append({'id':int(way.attrib['id']),'kind':kind,'name':tags.get('name',''),'major':highway in ['primary','secondary','tertiary'],'points':[[round(x,6),round(y,6)] for x,y in pts]})
 output={'source':'© OpenStreetMap contributors · ODbL 1.0','sourceUrl':'https://www.openstreetmap.org/copyright','features':features}
-p=Path('lib/map/data/imboassica.json')
+p=Path(sys.argv[2] if len(sys.argv)>2 else 'lib/map/data/imboassica.json')
 p.write_text(json.dumps(output,separators=(',',':'),ensure_ascii=False)+'\n')
 print(f'{len(features)} features, {p.stat().st_size} bytes')
 for f in features:

@@ -58,7 +58,9 @@ self.addEventListener('fetch', event => {
             if (previous) return previous;
           }
         }
-        return fetch(request);
+        const response=await fetch(request);
+        if(response.ok){const cache=await caches.open(SHELL);await cache.put(request,response.clone()).catch(()=>{});}
+        return response;
       })());
     }
     return;
