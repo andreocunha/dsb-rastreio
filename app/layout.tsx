@@ -24,7 +24,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      {/* Extensões (ex.: ColorZilla injeta cz-shortcut-listen) alteram o <body> antes da hidratação. */}
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
