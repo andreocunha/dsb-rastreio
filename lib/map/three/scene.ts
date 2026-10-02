@@ -4,6 +4,8 @@ import {solarBoat,disposeBoat,type BoatModel} from './boat';
 import {BoatFx} from './boat-fx';
 import {BoatWake} from './boat-wake';
 import {Course} from './course';
+import {LabelLayout} from '../labels';
+import {LabelSprites} from './labels';
 import {courseOverlay} from './course-overlay';
 import {groundMaterial,groundUniforms} from './ground';
 import {projection} from './geography';
@@ -63,10 +65,16 @@ export class RaceScene {
   private light=new T.Color(1,1,1);
   private shadow=new T.Vector2();
   private local=new T.Vector2();
-  /** Frame budget. Drops to 30 once on devices that cannot sustain 60. */
+  /** Frame budget. Drops to 30 while the device cannot sustain 60, and retries 60 later. */
   fps=60;
+  /** Camera still easing (towards a boat, a bearing or a tilt): the engine keeps full frame rate. */
+  moving=false;
+  private rendered:number[]=[];
+  private droppedAt=0;private retryAfter=10000;private sampled=0;
   /** Frames deliberately held back (page UI busy): don't mistake them for a slow device. */
   throttled=false;
+  private labelLayout=new LabelLayout();
+  private labels=new LabelSprites();
   /** Per boat, eased world offset that keeps an enlarged hull from cutting through an enlarged buoy. */
   private nudges=new Map<string,{x:number,z:number}>();
   constructor(private canvas:HTMLCanvasElement,private fallback:()=>void,private tiles:TileCache){
@@ -151,12 +159,14 @@ export class RaceScene {
     if(this.dead)return;
     const elapsed=this.lastTime?time-this.lastTime:16.7;
     const dt=Math.min(.1,elapsed/1000);
-    if(!this.throttled){
-      this.interval+=(Math.min(100,elapsed)-this.interval)*.05;
-      // Sustained slow frames: first cap to 30 fps, then lower pixel density once.
-      if(this.lastTime&&this.fps===60&&this.frame>90&&this.interval>24)this.fps=30;
-      if(this.lastTime && elapsed>48)this.slow++;else this.slow=Math.max(0,this.slow-1);
+    if(!this.throttled&&this.lastTime){
+      this.interval+=(Math.min(100,elapsed)-this.interval)*.05;this.sampled++;
+      // Sustained slow frames: cap to 30 fps (then lower pixel density once). A busy spell
+      // (a tile burst, a notification) must not cost the whole event: retry 60 later, backing off.
+      if(this.fps===60&&this.sampled>90&&this.interval>24){this.fps=30;this.droppedAt=time;this.retryAfter=Math.min(300000,this.retryAfter*2);}
+      if(elapsed>48)this.slow++;else this.slow=Math.max(0,this.slow-1);
     }
+    if(this.fps===30&&time-this.droppedAt>this.retryAfter){this.fps=60;this.sampled=0;this.interval=1000/60;}
     this.lastTime=time;
     if(this.slow>60 && this.ratio>.75){this.ratio=Math.max(.75,this.ratio*.8);this.size='';this.slow=0;}
     if(this.venue!==(state.venueId??'imboassica'))this.loadVenue(state.venueId??'imboassica');
@@ -189,7 +199,9 @@ export class RaceScene {
       const locked=followed&&this.cameraTarget.distanceTo(center)*ppm<6;
       if(locked){this.cameraPosition.copy(desired);this.cameraTarget.copy(center);}
       else{this.cameraPosition.lerp(desired,amount);this.cameraTarget.lerp(center,amount);}
+      this.moving=!locked&&this.cameraTarget.distanceTo(center)*ppm>.5;
     }
+    if(Math.abs(turn)>.05||Math.abs(pitchTarget-this.pitch)>.05)this.moving=true;
     // Orbiting must not cut through the chord: keep the exact orbit while it turns.
     if(Math.abs(turn)>.01||Math.abs(pitchTarget-this.pitch)>.01){const offset=desired.clone().sub(center);this.cameraPosition.copy(this.cameraTarget).add(offset);}
     const near=Math.max(1,distance/40),far=Math.max(6000,distance*12);
@@ -210,6 +222,7 @@ export class RaceScene {
     const short=Math.min(state.width,state.height),boatPixels=Math.max(28,Math.min(54,short*.075)),buoyPixels=Math.max(22,Math.min(30,short*.06));
     const scaleTarget=Math.max(1,Math.min(24,boatPixels/(6.5*ppm)));
     this.boatScale+=(scaleTarget-this.boatScale)*(this.frame?Math.min(1,dt*8):1);
+    if(Math.abs(scaleTarget-this.boatScale)>this.boatScale*.01)this.moving=true;
     this.buoyScale=Math.max(1,Math.min(24,buoyPixels/(1.8*ppm)));
     const lightsOn=g.night>.25;
     // Buoy floats are ~.85 m in radius before the zoomed-out enlargement.
@@ -253,8 +266,19 @@ export class RaceScene {
     this.course.update(state,project);
     this.course.frame(time,mpp,pixelAngle,this.buoyScale,state.reducedMotion,this.shadow,g.night,this.yaw);
     this.key.position.set(center.x+g.key[0]*200,g.key[1]*200,center.z+g.key[2]*200);this.key.target.position.copy(center);
-    this.renderer.render(this.scene,this.camera);this.frame++;
-    if(this.frame%30===0){const d=this.canvas.dataset;d.drawCalls=String(this.renderer.info.render.calls);d.triangles=String(this.renderer.info.render.triangles);d.pixelRatio=this.renderer.getPixelRatio().toFixed(2);d.imageryTiles=String(this.imagery!.visibleCount);d.fps=String(this.fps);}
+    // --- Boat names, placed from this frame's camera and drawn over the scene.
+    const pixelRatio=this.renderer.getPixelRatio(),hullPixels=this.boatPixels();
+    const named=state.boats.map(b=>{const p=this.project(b.lat,b.lon,state,0,b.id);return{id:b.id,label:b.label,type:b.type,x:p.x,y:p.y,speed:b.speed,isFollowed:b.id===state.followBoatId,accentColor:b.accentColor,size:hullPixels};});
+    this.labels.resize(state.width,state.height);
+    this.labels.update(this.labelLayout.layout(named,state.width,state.height,time,pixelRatio),pixelRatio);
+    this.labels.prune(new Set(state.boats.map(b=>b.id)));
+    this.renderer.render(this.scene,this.camera);
+    const calls=this.renderer.info.render.calls,triangles=this.renderer.info.render.triangles;
+    this.renderer.autoClear=false;this.renderer.render(this.labels.scene,this.labels.camera);this.renderer.autoClear=true;
+    this.frame++;
+    // Frames actually rendered over the last second (diagnostics, next to the frame budget).
+    this.rendered.push(time);while(this.rendered.length&&time-this.rendered[0]>1000)this.rendered.shift();
+    if(this.frame%30===0){const d=this.canvas.dataset;d.drawCalls=String(calls);d.triangles=String(triangles);d.geometries=String(this.renderer.info.memory.geometries);d.textures=String(this.renderer.info.memory.textures);d.pixelRatio=this.renderer.getPixelRatio().toFixed(2);d.imageryTiles=String(this.imagery!.visibleCount);d.fps=String(this.fps);d.rendered=String(this.rendered.length);}
   }
   /** Smoothed camera heading in degrees, for the compass. */
   get heading(){return this.yaw;}
@@ -265,7 +289,7 @@ export class RaceScene {
     this.canvas.removeEventListener('webglcontextlost',this.onLoss);
     if(this.imagery){this.scene.remove(this.imagery.root);this.imagery.dispose();}
     for(const id of [...this.boats.keys()])this.removeBoat(id);
-    this.course.dispose();this.field?.dispose();
+    this.course.dispose();this.field?.dispose();this.labels.dispose();
     this.base.geometry.dispose();this.base.material.dispose();
     this.renderer.dispose();
   }

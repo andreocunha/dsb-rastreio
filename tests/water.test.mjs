@@ -5,11 +5,12 @@ import {resolve,dirname} from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as THREE from 'three';
+import {mergeGeometries} from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 function load(path,globals={}){
   path=resolve(path);if(path.endsWith('.json'))return JSON.parse(readFileSync(path,'utf8'));const exports={};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  vm.runInNewContext(code,{...globals,exports,require:name=>name==='three'?THREE:name.startsWith('three/')?{mergeGeometries:geometries=>geometries[0]}:load(resolve(dirname(path),name.endsWith('.json')?name:name+'.ts'),globals)});
+  vm.runInNewContext(code,{...globals,exports,require:name=>name==='three'?THREE:name.startsWith('three/')?{mergeGeometries}:load(resolve(dirname(path),name.endsWith('.json')?name:name+'.ts'),globals)});
   return exports;
 }
 const inside=(p,polygon)=>{let hit=false;for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){const [ax,ay]=polygon[i],[bx,by]=polygon[j];if((ay>p.lat)!==(by>p.lat)&&p.lon<(bx-ax)*(p.lat-ay)/(by-ay)+ax)hit=!hit;}return hit;};
@@ -39,7 +40,8 @@ test('distance transform is exact on a small grid',()=>{
 test('hull forms and outboard counts produce the configured boat',()=>{
   const context=new Proxy({},{get:(_,k)=>k==='createLinearGradient'?()=>({addColorStop(){}}):()=>{}});
   const document={createElement:()=>({width:0,height:0,getContext:()=>context})};
-  const {solarBoat}=load('lib/map/three/boat.ts',{document});
+  // Same typed-array constructors as three.js, so the real geometry merge accepts the pieces.
+  const {solarBoat}=load('lib/map/three/boat.ts',{document,Float32Array,Uint16Array,Uint32Array});
   for(const type of ['cat','mono'])for(const motors of [1,2,3]){
     const boat=solarBoat({type,motors,color:'#187cc1'});
     assert.equal(boat.motorOffsets.length,motors,`${type} with ${motors} motors`);

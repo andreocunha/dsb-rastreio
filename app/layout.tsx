@@ -14,6 +14,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Full-screen map with its own pinch zoom: zooming the page itself only breaks the layout.
+  maximumScale: 1,
+  userScalable: false,
   themeColor: "#edf0e4",
 };
 

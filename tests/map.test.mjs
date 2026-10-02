@@ -149,8 +149,8 @@ test('race limits, waiting berths, and support patrols remain separated for all 
     const state=createMapState(); Object.assign(state,defaultCourse(preset.id),{courseId:preset.id});
     const tick=createSimulation(state);
     const racers=state.boats.filter(b=>b.activity==='racing'), waiting=state.boats.filter(b=>b.activity==='waiting'), support=state.boats.filter(b=>b.activity==='support');
-    const expected=preset.id==='match-race' ? 2 : preset.id==='slalom' ? 1 : 6;
-    assert.equal(racers.length,expected,preset.id); assert.equal(waiting.length,6-expected); assert.equal(support.length,3);
+    const expected=preset.id==='match-race' ? 2 : preset.id==='slalom' ? 1 : 10;
+    assert.equal(racers.length,expected,preset.id); assert.equal(waiting.length,10-expected); assert.equal(support.length,3);
     if(preset.id==='match-race') assert.equal(new Set(racers.map(b=>b.raceRouteId)).size,2);
     const anchors=support.map(b=>({lat:b.lat,lon:b.lon}));
     let moved=false;
@@ -223,13 +223,13 @@ test('public demo ignores live points and stored course edits, can pause, and do
   const {initEngine}=modules(globals,mocks)('lib/map/engine.ts');
   const canvas=()=>({style:{},getContext:()=>({setTransform(){}})});
   const engine=initEngine(canvas(),canvas(),undefined,{},false,true);
-  frame(100);assert.equal(state.demo,true);assert.equal(state.boats.length,9,'six competitors plus rescue and support craft');
+  frame(100);assert.equal(state.demo,true);assert.equal(state.boats.length,13,'ten competitors plus rescue and support craft, as at the event');
   const start=state.boats[0].lat;
   for(let t=200;t<=1000;t+=100)frame(t);
   assert.notEqual(state.boats[0].lat,start);
   engine.setPaused(true);const paused=state.boats[0].lat;
   frame(2000);assert.equal(state.boats[0].lat,paused);
-  engine.setLiveBoats([]);assert.equal(state.boats.length,9);
+  engine.setLiveBoats([]);assert.equal(state.boats.length,13);
   engine.setDemoSpeed(4);engine.setPaused(false);frame(2100);
   assert.notEqual(state.boats[0].lat,paused);
   engine.destroy();
@@ -383,4 +383,34 @@ test('an edit session keeps the organizer copy on screen, reports edits, undoes,
   const count=t.edits.length;t.engine.addBuoy(-22.413,-41.821);
   assert.equal(t.edits.length,count,'no saves outside an edit session');
   t.engine.destroy();
+});
+
+test('boat names stay clear of hulls and of each other, fade in, and only re-render on change', () => {
+  let bitmaps = 0;
+  const context = new Proxy({}, {get: (_, k) => k === 'measureText' ? text => ({width: text.length * 6}) : () => {}, set: () => true});
+  const document = {createElement: () => { bitmaps++; return {width: 0, height: 0, getContext: () => context}; }};
+  const {LabelLayout} = modules({document, Path2D: class {roundRect(){} moveTo(){} lineTo(){} closePath(){}}})('lib/map/labels.ts');
+  const layout = new LabelLayout();
+  const boat = (id, x, y, extra = {}) => ({id, label: 'Equipe ' + id, type: 'cat', x, y, speed: 7.4, isFollowed: false, accentColor: '#2f86ff', size: 30, ...extra});
+  // Two boats side by side, a support craft, and one off screen.
+  const fleet = [boat('a', 200, 300, {isFollowed: true}), boat('b', 240, 300), boat('s', 100, 500, {type: 'jetski'}), boat('far', 2000, 300)];
+  let placed = [];
+  for (let t = 0; t <= 600; t += 16) placed = layout.layout(fleet, 400, 800, t, 2);
+  const ids = placed.map(l => l.id);
+  assert.deepEqual([...ids].sort(), ['a', 'b'], 'support craft only when followed; nothing for an off-screen boat');
+  assert.equal(placed.at(-1).id, 'a', 'the followed name is drawn last, on top');
+  assert.ok(placed.every(l => l.alpha === 1), 'faded in');
+  const pad = 16, box = l => ({x: l.x + pad, y: l.y + pad, w: l.bitmap.width / 2 - pad * 2, h: 22});
+  const [p, q] = placed.map(box);
+  assert.ok(p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, 'labels do not overlap');
+  for (const l of placed.map(box)) for (const b of fleet.slice(0, 2)) assert.ok(!(l.x < b.x + 12 && l.x + l.w > b.x - 12 && l.y < b.y + 12 && l.y + l.h > b.y - 12), 'no label covers a hull');
+  // Steady frames reuse the bitmaps; a new speed with the same digit count re-renders one, without re-measuring the pill.
+  const before = bitmaps;
+  for (let t = 616; t <= 1000; t += 16) layout.layout(fleet, 400, 800, t, 2);
+  assert.equal(bitmaps, before, 'no bitmap work while nothing changes');
+  fleet[0].speed = 8.1; const width = layout.layout(fleet, 400, 800, 1016, 2).find(l => l.id === 'a').bitmap.width;
+  assert.equal(bitmaps, before + 1, 'one re-render for the new speed');
+  assert.ok(width > 0);
+  // A boat that leaves the race takes its name with it.
+  assert.ok(!layout.layout(fleet.slice(1), 400, 800, 1032, 2).some(l => l.id === 'a'));
 });

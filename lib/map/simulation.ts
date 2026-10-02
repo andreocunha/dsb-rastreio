@@ -90,8 +90,8 @@ function idle(boat: Boat, anchor: GeoPoint, time: number, dt: number, support: b
 
 /** Pure local demo: roles are separate from race paths, no GPS or network involved. */
 export function createSimulation(state: MapState) {
-  const slots=waitingSlots(state.waitingArea,6), patrol=patrolSlots(state);
   const competitors=state.boats.filter(b=>b.type!=='jetski' && b.type!=='support');
+  const slots=waitingSlots(state.waitingArea,Math.max(6,competitors.length)), patrol=patrolSlots(state);
   const maxRacing=state.courseId==='match-race' ? 2 : state.courseId==='slalom' ? 1 : competitors.length;
   const paths=state.routes.map(route => {
     const lengths=route.points.map((p,i)=>distanceMeters(p,route.points[(i+1)%route.points.length]));

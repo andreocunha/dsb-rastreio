@@ -35,18 +35,6 @@ a { color: inherit; text-decoration: none; }
 .follow-stat > span { font-size: 9px; color: #7a8a76; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; background: transparent; border-radius: 9px; }
 .icon-button:hover { background: #e6ecdf; }
-.boat-labels-container { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.boat-label { position: absolute; top: 0; left: 0; height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 9px 0 6px; border-radius: 11px; white-space: nowrap; font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .1px; color: #f4fbf8; background: rgba(8, 30, 32, .74); box-shadow: 0 2px 10px rgba(0, 18, 20, .28), inset 0 0 0 1px rgba(255, 255, 255, .08); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); opacity: 0; visibility: hidden; will-change: transform, opacity; pointer-events: none; }
-.boat-label__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--boat-color); box-shadow: 0 0 0 2px rgba(255, 255, 255, .85); flex-shrink: 0; }
-.boat-label__speed:empty { display: none; }
-.boat-label__speed { font-weight: 500; font-variant-numeric: tabular-nums; opacity: .7; }
-.boat-label::after { content: ''; position: absolute; width: 7px; height: 7px; background: inherit; transform: rotate(45deg); }
-.boat-label[data-side=top]::after { left: calc(50% - 3.5px); bottom: -3px; }
-.boat-label[data-side=bottom]::after { left: calc(50% - 3.5px); top: -3px; }
-.boat-label[data-side=right]::after { left: -3px; top: 7.5px; }
-.boat-label[data-side=left]::after { right: -3px; top: 7.5px; }
-.boat-label--selected { background: rgba(255, 255, 250, .96); color: #10302e; box-shadow: 0 3px 14px rgba(0, 18, 20, .3); }
-.boat-label--selected .boat-label__dot { box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(16, 48, 46, .25); }
 .editor-panel { position: absolute; right: 88px; bottom: max(24px, env(safe-area-inset-bottom)); width: 305px; max-height: calc(100dvh - 48px); overflow-y: auto; background: #fffff8fc; box-shadow: var(--shadow); padding: 20px; border-radius: 18px; z-index: 15; scrollbar-width: thin; }
 .course-picker { display: grid; gap: 7px; margin-top: 20px; font-size: 10px; color: var(--muted); }
 .course-picker select { width: 100%; min-width: 0; border: 1px solid #dce5d6; border-radius: 9px; padding: 12px 8px; background: #f3f6ed; color: var(--ink); font: 12px Arial, sans-serif; }
@@ -190,8 +178,6 @@ a { color: inherit; text-decoration: none; }
 }
 /* Touch screens pinch to zoom; the layer switch lives in the view menu on phones. */
 @media (pointer: coarse) and (max-width: 699px) { .zoom-controls { display: none; } }
-/* Labels move every frame: a backdrop blur under each one is too costly on phones. */
-@media (max-width: 699px), (pointer: coarse) { .boat-label { -webkit-backdrop-filter: none; backdrop-filter: none; } .boat-label:not(.boat-label--selected) { background: rgba(8, 30, 32, .84); } }
 @media (max-width: 699px) { .map-tools > .map-tool:not(.map-compass):not(.map-edit) { display: none; } }
 
 /* ── View menu: inline on larger screens, one button on phones ── */

@@ -6,6 +6,7 @@ import type { MapState, MapConfig, Buoy, Boat, EditTool, BoatType } from './type
 import { geoToWorld, geoToScreen, screenToGeo, bearing } from './geo';
 import { TileCache } from './tiles';
 import { renderFrame, renderBackground } from './renderer';
+import { LabelLayout, drawLabels } from './labels';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
 import { readCachedCourse, cacheCourse } from './storage';
@@ -26,13 +27,17 @@ export const DEMO_ROUTE: [number, number][] = [
 ];
 
 export const BOAT_DEFS: { id: string; label: string; type: BoatType; motors?: number; logo?: string; hull: string; accent: string; baseSpeed: number; startOffset: number }[] = [
-  // Competidores
+  // Competidores: as many as at the event (10 racing + 3 support), so the demo is a fair load test.
   { id: 'b1', label: 'Solares', logo: 'solares.webp', type: 'cat', motors: 2, hull: '#ffffff', accent: '#2f86ff', baseSpeed: 8.5, startOffset: 0 },
   { id: 'b2', label: 'Arariboia', logo: 'arariboia.webp', type: 'mono', motors: 1, hull: '#ffe066', accent: '#ffc629', baseSpeed: 7.8, startOffset: 0.06 },
   { id: 'b3', label: 'Babitonga', logo: 'babitonga.webp', type: 'cat', motors: 3, hull: '#ff6666', accent: '#ff4d4f', baseSpeed: 9.0, startOffset: 0.12 },
   { id: 'b4', label: 'Abissol', logo: 'abissol.webp', type: 'mono', motors: 2, hull: '#66ff99', accent: '#7bd63a', baseSpeed: 7.2, startOffset: 0.18 },
   { id: 'b5', label: 'Hefesto', logo: 'hefesto.webp', type: 'cat', motors: 1,  hull: '#cc99ff', accent: '#a371ff', baseSpeed: 8.0, startOffset: 0.24 },
   { id: 'b6', label: 'Albardão', logo: 'albardao.webp', type: 'mono', motors: 3, hull: '#ffffff', accent: '#ff7a1f',    baseSpeed: 8.2, startOffset: 0.30 },
+  { id: 'b7', label: 'Hurakan', logo: 'hurakan.webp', type: 'cat', motors: 2, hull: '#ffffff', accent: '#41d6f5', baseSpeed: 7.6, startOffset: 0.36 },
+  { id: 'b8', label: 'Leviatã', logo: 'leviata.webp', type: 'mono', motors: 1, hull: '#ffffff', accent: '#ff5fa2', baseSpeed: 8.7, startOffset: 0.42 },
+  { id: 'b9', label: 'Reis do Sol', logo: 'reis-do-sol.webp', type: 'cat', motors: 1, hull: '#ffffff', accent: '#2fd1a7', baseSpeed: 7.4, startOffset: 0.48 },
+  { id: 'b10', label: 'Zênite Solar', logo: 'zenite.webp', type: 'mono', motors: 2, hull: '#ffffff', accent: '#c6e83a', baseSpeed: 8.4, startOffset: 0.54 },
   // Suporte
   { id: 's1', label: 'Jet Ski Resgate', type: 'jetski',  hull: '#f4f6f7', accent: '#aab4bc', baseSpeed: 12.0, startOffset: 0.40 },
   { id: 's2', label: 'Barco Suporte',   type: 'support', hull: '#f0f0f0', accent: '#aab4bc', baseSpeed: 10.0, startOffset: 0.55 },
@@ -41,19 +46,6 @@ export const BOAT_DEFS: { id: string; label: string; type: BoatType; motors?: nu
 
 const BUOY_HIT_RADIUS = 20;
 const BOAT_HIT_RADIUS = 22;
-
-export interface BoatScreenInfo {
-  id: string;
-  label: string;
-  type: string;
-  x: number;
-  y: number;
-  speed: number;
-  isFollowed: boolean;
-  accentColor: string;
-  /** On-screen hull length in pixels, to keep labels clear of the boat. */
-  size: number;
-}
 
 export interface EngineCallbacks {
   on3DFallback?: () => void;
@@ -64,7 +56,6 @@ export interface EngineCallbacks {
   onCourseEdit?: (edit: {venue: string; course: string; geometry: CourseGeometry; areas: EventAreas}) => void;
   onTelemetryUpdate?: (boatId: string, lat: number, lon: number, speed: number, heading: number) => void;
   onBuoysChange?: (buoys: Buoy[]) => void;
-  onBoatPositions?: (boats: BoatScreenInfo[]) => void;
   /** 3D camera heading/tilt each frame (null in the flat view), e.g. for a compass. */
   onView?: (heading: number | null, tilted: boolean) => void;
 }
@@ -239,8 +230,25 @@ export function initEngine(
   const tiles = new TileCache(config);
 
   let rafId = 0;
+  let wakeTimer: ReturnType<typeof setTimeout> | undefined;
   let running = true;
   let uiBusy = false;
+  // Eco mode (3D): full frame rate only while someone interacts or the camera is moving.
+  // A race is watched for hours with the phone in hand; idle frames at 30 fps look the same
+  // (boats cover a pixel or two per frame) and halve the heat and battery drain.
+  const ECO_FPS = 30, ACTIVE_MS = 2500;
+  let activeUntil = 0;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  /** Back to full rate immediately, cancelling a pending eco wait. */
+  function wake() {
+    activeUntil = now() + ACTIVE_MS;
+    if (wakeTimer !== undefined && running && !document.hidden) { clearTimeout(wakeTimer); wakeTimer = undefined; rafId = requestAnimationFrame(frame); }
+  }
+  /** Next frame: on fast displays (120 Hz) don't wake the page on every vsync just to skip it. */
+  function schedule(wait: number) {
+    if (wait > 10) wakeTimer = setTimeout(() => { wakeTimer = undefined; if (running) rafId = requestAnimationFrame(frame); }, wait - 9);
+    else rafId = requestAnimationFrame(frame);
+  }
 
   const recycledNumbers: number[] = [];
   let nextBuoyNumber = Math.max(0, ...state.buoys.map(b => b.number)) + 1;
@@ -405,6 +413,8 @@ export function initEngine(
   }
 
   // --- Input ---
+  // Any touch, drag, pinch or wheel on the map: full frame rate right away.
+  for (const evt of ['pointerdown', 'pointermove', 'wheel', 'touchstart'] as const) canvas.addEventListener?.(evt, wake, {passive: true});
   const detachInput = attachInputHandlers(canvas, state, config, {
     screenToWorld(x,y){return view3D?.screenWorld(x,y,state)??null;},
     canOrient(){return !!view3D;},
@@ -532,14 +542,19 @@ export function initEngine(
   let renderedTileRevision = -1;
   let previousSceneKey = '';
   let overlayHidden = false;
+  const labelLayout = new LabelLayout();
 
   function frame(time: number) {
     if (!running) return;
-    const interpolating=live && [...liveMotion.values()].some(m=>m.isMoving(time));
-    const fps=Math.min(uiBusy?30:60,state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30);
+    const interpolating=!view3D && live && [...liveMotion.values()].some(m=>m.isMoving(time));
+    const interactive = state.dragging || time < activeUntil || !!view3D?.moving;
+    const fps=state.reducedMotion?15:view3D?Math.min(view3D.fps,uiBusy||!interactive?ECO_FPS:60):interpolating||state.dragging?60:live?15:30;
+    // Deliberately held-back frames must not be read as a slow device.
+    if (view3D) view3D.throttled = fps < view3D.fps;
     const interval = 1000 / fps;
     if (lastTime && time - lastTime < interval - 1) {
-      rafId = requestAnimationFrame(frame);
+      if (view3D) schedule(interval - (time - lastTime));
+      else rafId = requestAnimationFrame(frame);
       return;
     }
     const dt = lastTime ? Math.min(time - lastTime, 100) : 16; // cap at 100ms
@@ -571,7 +586,13 @@ export function initEngine(
     const sceneKey = `${key}/${state.worldCX}/${state.worldCY}/${sceneRevision}/${state.followBoatId}/${state.paused}`;
     const sceneChanged = !state.paused || sceneKey !== previousSceneKey;
     if (overlayHidden) { overlayHidden = false; canvas.style.opacity = ''; }
-    if (sceneChanged) renderFrame(ctx, state, config);
+    if (sceneChanged) {
+      renderFrame(ctx, state, config);
+      // The 3D scene draws its own names; the 2D map stamps them onto its canvas.
+      const named = state.boats.map(b => {const p = geoToScreen(b.lat, b.lon, state.worldCX, state.worldCY, state.zoom, config.tileSize, state.width, state.height);
+        return {id: b.id, label: b.label, type: b.type, x: p.x, y: p.y, speed: b.speed, isFollowed: b.id === state.followBoatId, accentColor: b.accentColor, size: 44};});
+      if (typeof document !== 'undefined' && 'createElement' in document) drawLabels(ctx, labelLayout.layout(named, state.width, state.height, time, state.dpr), state.dpr);
+    }
     previousSceneKey = sceneKey;
     }else {
       view3D.render(state,config,time);
@@ -590,30 +611,13 @@ export function initEngine(
       lastFleetTime = time;
     }
 
-    // Emit boat screen positions for DOM labels
-    if (callbacks.onBoatPositions) {
-      const infos: BoatScreenInfo[] = [];
-      const size = view3D ? view3D.boatPixels() : 44;
-      for (const boat of state.boats) {
-        const p = view3D?.project(boat.lat,boat.lon,state,0,boat.id) ?? geoToScreen(
-          boat.lat, boat.lon, state.worldCX, state.worldCY,
-          state.zoom, config.tileSize, state.width, state.height,
-        );
-        infos.push({
-          id: boat.id, label: boat.label, type: boat.type,
-          x: p.x, y: p.y, speed: boat.speed,
-          isFollowed: boat.id === state.followBoatId,
-          accentColor: boat.accentColor, size,
-        });
-      }
-      callbacks.onBoatPositions(infos);
-    }
 
-    rafId = requestAnimationFrame(frame);
+    if (view3D) schedule(interval - (now() - time));
+    else rafId = requestAnimationFrame(frame);
   }
 
   function visibility() {
-    cancelAnimationFrame(rafId);
+    cancelAnimationFrame(rafId);if(wakeTimer!==undefined){clearTimeout(wakeTimer);wakeTimer=undefined;}
     lastTime = 0;view3D?.resetClock();
     if (!document.hidden && running) rafId = requestAnimationFrame(frame);
   }
@@ -629,13 +633,13 @@ export function initEngine(
         const {RaceScene}=await import('./three/scene');
         if(!running || generation!==viewGeneration)return false;
         view3D=new RaceScene(target,()=>{view3D?.dispose();view3D=null;backgroundKey='';callbacks.on3DFallback?.();},tiles);
-        view3D.setLighting(lighting);view3D.setPhotographic(photographic);view3D.throttled=uiBusy;return true;
+        view3D.setLighting(lighting);view3D.setPhotographic(photographic);wake();return true;
       }catch{callbacks.on3DFallback?.();return false;}
     },
     setLighting(mode){lighting=mode;view3D?.setLighting(mode);},
     setPhotographic(enabled){photographic=enabled;view3D?.setPhotographic(enabled);},
     setDemoSpeed(speed){demoSpeed=[1,2,4].includes(speed)?speed:1;},
-    resetView(){state.bearing=0;state.pitch=null;},
+    resetView(){state.bearing=0;state.pitch=null;wake();},
     selectVenue(id) {
       const venue = venueById(id);
       if (venue.id === state.venueId) return;
@@ -692,11 +696,11 @@ export function initEngine(
       Object.assign(state, previous); state.activeRouteId = null; renumberBuoys(); persist(false);
     },
     fit,
-    zoom(delta) { state.zoom = Math.max(config.zoomMin, Math.min(config.zoomMax, state.zoom + delta)); },
-    follow(id) { state.followBoatId = state.boats.some(b => b.id === id) ? id : null; },
+    zoom(delta) { state.zoom = Math.max(config.zoomMin, Math.min(config.zoomMax, state.zoom + delta)); wake(); },
+    follow(id) { state.followBoatId = state.boats.some(b => b.id === id) ? id : null; wake(); },
     setStyle(style) { state.style = style; },
     setPaused(paused) { state.paused = paused; },
-    setUiBusy(busy) { uiBusy = busy; if (view3D) view3D.throttled = busy; },
+    setUiBusy(busy) { uiBusy = busy; if (!busy) wake(); },
     addBuoy,
     removeBuoy,
     getBuoys: () => [...state.buoys],
@@ -733,7 +737,8 @@ export function initEngine(
     clearAllRoutes() { state.routes = []; state.activeRouteId = null; persist(); },
     destroy() {
       running = false;viewGeneration++;view3D?.dispose();view3D=null;
-      cancelAnimationFrame(rafId);
+      cancelAnimationFrame(rafId);if(wakeTimer!==undefined)clearTimeout(wakeTimer);
+      for (const evt of ['pointerdown', 'pointermove', 'wheel', 'touchstart'] as const) canvas.removeEventListener?.(evt, wake);
       window.removeEventListener('resize', resize);
       detachInput();
       tiles.destroy();

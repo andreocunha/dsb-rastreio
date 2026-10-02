@@ -59,13 +59,16 @@ function hull(length:number,beam:number,freeboard:number,sheer=.12){
 }
 
 let panelTexture:T.CanvasTexture|null=null;
+const STRIP=128,PANEL_U=512/(512+STRIP),WHITE_U=(512+STRIP/2)/(512+STRIP);
 /** Photovoltaic cells: dark blue with fine silver bus bars, generated once. */
 function panels(){
   if(panelTexture)return panelTexture;
   // Seen from above the array is only ~30–60 px wide, so the pattern is bold:
   // a light aluminium frame, silver module joints and a visible cell grid.
-  const W=512,H=512,canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;
+  const W=512,H=512,canvas=document.createElement('canvas');canvas.width=W+STRIP;canvas.height=H;
   const ctx=canvas.getContext('2d')!;
+  // Pure white strip on the right: every other boat part samples it, so one material draws the whole boat.
+  ctx.fillStyle='#ffffff';ctx.fillRect(W,0,STRIP,H);
   ctx.fillStyle='#dfe6ec';ctx.fillRect(0,0,W,H);
   const frame=18,gap=10,cols=2,rows=3;
   const mw=(W-frame*2-gap*(cols-1))/cols,mh=(H-frame*2-gap*(rows-1))/rows;
@@ -178,7 +181,7 @@ function craft(style:BoatStyle):BoatModel{
   // Invisible stand-in keeps the flag API uniform.
   const flag=new T.Mesh(new T.PlaneGeometry(.01,.01),new T.ShaderMaterial({vertexShader:flagVertex,fragmentShader:flagFragment,visible:false,uniforms:{time:{value:0},color:{value:new T.Color()},light:{value:1}}}));
   body.add(flag);
-  merge(body,new Set<T.Object3D>([flag,lights]));
+  merge(body,new Set<T.Object3D>([flag,lights]));mergeLights(lights);
   return {root,body,flag,lights,motorOffsets:[0],length,beam,hulls:[new T.Vector4(0,0,beam/2,length/2)],style:`${style.type}/${style.motors}/${style.color}`};
 }
 
@@ -238,13 +241,45 @@ export function solarBoat(style:BoatStyle):BoatModel{
   // Navigation lights: port red, starboard green, stern white. Only visible at night.
   const lamp=(color:string,x:number,y:number,z:number)=>{const m=new T.Mesh(lightGeometry,new T.MeshBasicMaterial({color,transparent:true}));m.position.set(x,y,z);lights.add(m);};
   lamp('#ff3b30',-beam/2+.1,deck+.12,-length/2+.9);lamp('#34ff7a',beam/2-.1,deck+.12,-length/2+.9);lamp('#fff6d8',mastX,deck+2.3,mastZ);
-  merge(body,new Set<T.Object3D>([flag,lights]));
+  merge(body,new Set<T.Object3D>([flag,lights]));mergeLights(lights);
   return {root,body,flag,lights,motorOffsets:motorBase,length,beam,hulls,style:`${style.type}/${style.motors}/${style.color}`};
 }
 
-/** Static parts become one mesh per material: a handful of draw calls per boat. */
+/**
+ * The static parts of every boat (hulls, panels, crew, motors) are drawn with this one material:
+ * each part's colour and glow travel as vertex attributes, and the panel texture shares an atlas
+ * with a white strip the other parts sample. A boat body is then one draw call instead of ~8;
+ * per-draw overhead is what limits mid-range phones with 13 boats on screen.
+ */
+const bodyMaterial=new T.MeshLambertMaterial({vertexColors:true,transparent:true,side:T.DoubleSide,forceSinglePass:true});
+bodyMaterial.onBeforeCompile=shader=>{
+  shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 glow;\nvarying vec3 vGlow;')
+    .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=glow;');
+  shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow;')
+    .replace('vec3 totalEmissiveRadiance = emissive;','vec3 totalEmissiveRadiance = emissive + vGlow;');
+};
+const sharedMaterials=new Set<T.Material>([...Object.values(shared),...Object.values(craftMaterials),bodyMaterial]);
+const lampMaterial=new T.MeshBasicMaterial({vertexColors:true,transparent:true});
+sharedMaterials.add(lampMaterial);
+/** Navigation lights (night only) as a single mesh. */
+function mergeLights(lights:T.Group){
+  const pieces:T.BufferGeometry[]=[];
+  for(const lamp of [...lights.children]){
+    if(!(lamp instanceof T.Mesh))continue;
+    lamp.updateMatrix();
+    const piece=(lamp.geometry as T.BufferGeometry).clone().applyMatrix4(lamp.matrix),count=piece.getAttribute('position').count,colour=new Float32Array(count*3);
+    const c=(lamp.material as T.MeshBasicMaterial).color;for(let i=0;i<count;i++)colour.set([c.r,c.g,c.b],i*3);
+    piece.setAttribute('color',new T.BufferAttribute(colour,3));pieces.push(piece);
+    (lamp.material as T.Material).dispose();lights.remove(lamp);
+  }
+  if(pieces.length){const mesh=new T.Mesh(mergeGeometries(pieces)!,lampMaterial);mesh.renderOrder=20;lights.add(mesh);pieces.forEach(p=>p.dispose());}
+}
+/** Merged into the boat's single mesh: plain colours (Phong drawn as Lambert) and the textured panels. */
+const plain=(m:T.Material|undefined):m is T.MeshLambertMaterial|T.MeshPhongMaterial=>(m instanceof T.MeshLambertMaterial||m instanceof T.MeshPhongMaterial)&&(!m.map||m===panelMaterial)&&m!==bodyMaterial;
+
+/** Static parts become one mesh per material (plain colours share a single one): a few draw calls per boat. */
 function merge(body:T.Group,keep:Set<T.Object3D>){
-  const parts=new Map<T.Material,T.BufferGeometry[]>();
+  const parts=new Map<T.Material,T.BufferGeometry[]>(),merged=new Set<T.Material>();
   for(const child of [...body.children]){
     if(keep.has(child)||!(child instanceof T.Mesh))continue;
     child.updateMatrix();
@@ -259,16 +294,29 @@ function merge(body:T.Group,keep:Set<T.Object3D>){
       }
       if(!piece.getAttribute('uv'))piece.setAttribute('uv',new T.BufferAttribute(new Float32Array(g.count*2),2));
       piece.applyMatrix4(child.matrix);
-      const m=materials[g.materialIndex??0];
+      // A single material covers every group (a cylinder's caps are groups 1 and 2).
+      let m=Array.isArray(child.material)?materials[g.materialIndex??0]:child.material as T.Material;
+      if(plain(m)){
+        // Panels keep their texture coordinates (squeezed left of the white strip); the rest reads white.
+        const uv=piece.getAttribute('uv') as T.BufferAttribute;
+        for(let i=0;i<g.count;i++){if(m===panelMaterial)uv.setX(i,uv.getX(i)*PANEL_U);else uv.setXY(i,WHITE_U,.5);}
+        const colour=new Float32Array(g.count*3),glow=new Float32Array(g.count*3);
+        for(let i=0;i<g.count;i++){colour.set([m.color.r,m.color.g,m.color.b],i*3);glow.set([m.emissive.r,m.emissive.g,m.emissive.b],i*3);}
+        piece.setAttribute('color',new T.BufferAttribute(colour,3));piece.setAttribute('glow',new T.BufferAttribute(glow,3));
+        merged.add(m);m=bodyMaterial;
+      }
       if(!parts.has(m))parts.set(m,[]);parts.get(m)!.push(piece);
     }
     source.dispose();body.remove(child);
   }
+  if(parts.has(bodyMaterial)&&!bodyMaterial.map){bodyMaterial.map=panels();bodyMaterial.needsUpdate=true;}
   for(const [material,pieces] of parts){
     const mesh=new T.Mesh(mergeGeometries(pieces)!,material);mesh.renderOrder=20;body.add(mesh);
     pieces.forEach(p=>p.dispose());
   }
   for(const o of keep)o.traverse(c=>{if(c instanceof T.Mesh)c.renderOrder=20;});
+  // Per-boat hull colours now live in the vertices; nothing renders with them any more.
+  for(const m of merged)if(!sharedMaterials.has(m)&&m!==panelMaterial)m.dispose();
 }
 
 export function disposeBoat(model:BoatModel){
@@ -276,6 +324,6 @@ export function disposeBoat(model:BoatModel){
   model.root.traverse(o=>{if(o instanceof T.Mesh){geometries.add(o.geometry);for(const m of [o.material].flat())materials.add(m);}});
   geometries.forEach(g=>{if(g!==lightGeometry)g.dispose();});
   // Shared materials live for the whole session; only per-boat materials are released.
-  const keep=new Set<T.Material>([...Object.values(shared),...Object.values(craftMaterials)]);
+  const keep=sharedMaterials;
   materials.forEach(m=>{if(!keep.has(m)&&m!==panelMaterial)m.dispose();});
 }

@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { initEngine, type EngineAPI, type LiveBoat } from '@/lib/map/engine';
 import { ROUTE_COLORS, type Boat, type EditTool } from '@/lib/map/types';
-import { BoatLabels, type BoatLabelsHandle } from './BoatLabels';
 import { Icon } from './Icon';
 import { VENUES, venueById } from '@/lib/map/venues';
 import { feedStatusFor, isRecentPosition } from '@/lib/tracker/freshness';
@@ -46,7 +45,6 @@ export default function MapCanvas() {
   const [demoSpeed,setDemoSpeed]=useState(1);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const backgroundRef = useRef<HTMLCanvasElement>(null);
-  const labelsRef = useRef<BoatLabelsHandle>(null);
   const compassRef = useRef<HTMLButtonElement>(null);
   const engineRef = useRef<EngineAPI>(null);
   const editorRef = useRef<HTMLElement>(null);
@@ -125,7 +123,6 @@ export default function MapCanvas() {
     setEmbed(framed||new URLSearchParams(location.search).get('embed')==='1');
     const engine = initEngine(canvasRef.current, backgroundRef.current, undefined, {
       on3DFallback:()=>{setView3D(false);setLoading3D(false);setViewMessage('3D indisponível neste aparelho. Modo simplificado ativo.');},
-      onBoatPositions: boats => labelsRef.current?.update(boats),
       onView: (heading, tilted) => {
         // Updated per frame without React renders: rotate the needle, show only when turned or tilted.
         const compass = compassRef.current; if (!compass) return;
@@ -171,6 +168,10 @@ export default function MapCanvas() {
       const wanted=new URLSearchParams(location.search).get('boat');
       if(first && wanted && rows.has(wanted)){engine.follow(wanted);first=false;}
     }
+    // Position deltas can arrive many times a second (one per GPS fix): apply them in batches.
+    // Motion is interpolated from each fix's own timestamp, so a 200 ms batch is invisible.
+    let batch:ReturnType<typeof setTimeout>|undefined;
+    const queueUpdate=()=>{batch??=setTimeout(()=>{batch=undefined;if(!disposed)update();},200);};
     // Optional boat style from the organization: "cat:2" or "mono:1".
     const style=(value?:string)=>{const [hull,motors]=(value??'').split(':');return {hull:hull==='mono'?'mono' as const:'cat' as const,motors:Math.min(3,Math.max(1,Number(motors)||1))};};
     function decode(row:[string,string,string,number,number,number|null,number|null,number,string?,string?]):LiveBoat {
@@ -189,7 +190,7 @@ export default function MapCanvas() {
         if(data.n!==sequence+1){source?.close();connect();return;}sequence=data.n;
         for(const [id,label,color,look,logo] of data.m){const old=rows.get(id);rows.set(id,old?{...old,label,color,...style(look),logo:logo||undefined}:{id,label,color,...style(look),logo:logo||undefined,lat:0,lon:0,speed:null,heading:null,capturedAt:''});}
         for(const [id,lat,lon,speed,heading,time]of data.p){const old=rows.get(id);if(old)rows.set(id,{...old,lat:lat/1e7,lon:lon/1e7,speed:speed===null?null:speed/100*1.943844,heading,capturedAt:new Date(time).toISOString()});}
-        for(const id of data.r)rows.delete(id);update();
+        for(const id of data.r)rows.delete(id);queueUpdate();
 
       });
       source.addEventListener('sos',event=>{
@@ -221,7 +222,7 @@ export default function MapCanvas() {
     }
     // Refresh stale labels locally even when there are no network changes.
     const staleTimer=setInterval(update,5000);
-    return ()=>{disposed=true;clearTimeout(reconnect);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);engine.destroy();engineRef.current=null;};
+    return ()=>{disposed=true;clearTimeout(reconnect);clearTimeout(batch);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);engine.destroy();engineRef.current=null;};
   }, []);
 
   async function changeView(enabled:boolean) {
@@ -322,7 +323,6 @@ export default function MapCanvas() {
         <canvas ref={threeRef} className="map-three" aria-hidden="true"/>
         <canvas ref={backgroundRef} className="map-background" aria-hidden="true" />
         <canvas ref={canvasRef} className="map-canvas" aria-label={`Mapa · ${venueById(venueId).name}. Arraste para explorar.`} />
-        <BoatLabels ref={labelsRef} />
       </div>
       <Fleet fleet={fleet} selected={selected} demo={demo} onSelect={selectBoat} onBusy={setUiBusy}/>
 
