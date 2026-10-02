@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useImperativeHandle, forwardRef, memo } from 'react';
+import { useEffect, useRef, useImperativeHandle, forwardRef, memo } from 'react';
 import type { BoatScreenInfo } from '@/lib/map/engine';
 export interface BoatLabelsHandle { update(boats: BoatScreenInfo[]): void; }
 
@@ -28,12 +28,22 @@ function offset(side: Side, width: number, radius: number) {
 export const BoatLabels = memo(forwardRef<BoatLabelsHandle>(function BoatLabels(_, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, Label>());
+  // Read the container size only when it changes: reading clientWidth every frame forced a layout.
+  const size = useRef({width: 0, height: 0});
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    size.current = {width: container.clientWidth, height: container.clientHeight};
+    const observer = new ResizeObserver(([entry]) => { size.current = {width: entry.contentRect.width, height: entry.contentRect.height}; });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
   useImperativeHandle(ref, () => ({
     update(boats) {
       const container = containerRef.current;
       if (!container) return;
       const now = performance.now();
-      const width = container.clientWidth, height = container.clientHeight;
+      const {width, height} = size.current;
       const occupied: Box[] = [];
       // Boats themselves are obstacles too: a name never covers another hull.
       const hulls = boats.map(b => {const r = Math.max(10, b.size * .42); return {id: b.id, box: {x: b.x - r, y: b.y - r, width: r * 2, height: r * 2}};});
@@ -57,11 +67,13 @@ export const BoatLabels = memo(forwardRef<BoatLabelsHandle>(function BoatLabels(
         if (label.color !== boat.accentColor) { label.color = boat.accentColor; el.style.setProperty('--boat-color', boat.accentColor); }
         if (label.followed !== boat.isFollowed) { label.followed = boat.isFollowed; el.classList.toggle('boat-label--selected', boat.isFollowed); }
         const speedText = boat.isFollowed && boat.speed > 0 ? `${boat.speed.toFixed(1)} nós` : '';
-        if (label.text !== boat.label + speedText) {
-          label.name.textContent = boat.label;
-          label.speed.textContent = speedText;
-          label.text = boat.label + speedText;
-          label.width = 0;
+        const text = boat.label + speedText;
+        if (label.text !== text) {
+          if (label.name.textContent !== boat.label) label.name.textContent = boat.label;
+          if (label.speed.textContent !== speedText) label.speed.textContent = speedText;
+          // Tabular digits: "7.9" → "8.1" keeps the width, so only re-measure (a forced layout) when the length changes.
+          if (label.text.length !== text.length) label.width = 0;
+          label.text = text;
         }
         if (!label.width) label.width = el.offsetWidth || boat.label.length * 7 + 26;
         const support = boat.type === 'jetski' || boat.type === 'support';

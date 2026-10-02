@@ -131,7 +131,9 @@ export default function MapCanvas() {
         const compass = compassRef.current; if (!compass) return;
         const visible = heading !== null && (tilted || Math.min(heading, 360 - heading) > .5);
         if (compass.hidden === visible) compass.hidden = !visible;
-        if (visible) compass.style.setProperty('--heading', `${-heading!}deg`);
+        // Quarter-degree steps: no style invalidation while the heading is steady.
+        const needle = visible ? `${-Math.round(heading! * 4) / 4}deg` : '';
+        if (visible && compass.dataset.heading !== needle) { compass.dataset.heading = needle; compass.style.setProperty('--heading', needle); }
       },
       onSelectionChange: setSelected,
       onFleetUpdate: setFleet,

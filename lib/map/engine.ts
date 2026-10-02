@@ -319,15 +319,17 @@ export function initEngine(
   }
 
   function hitTestBoat(screenX: number, screenY: number): Boat | null {
+    // Close up the hull is bigger than the fixed radius: tapping its bow must not count as open water.
+    const radius = Math.max(BOAT_HIT_RADIUS, (view3D?.boatPixels() ?? 0) * .55);
     for (let i = state.boats.length - 1; i >= 0; i--) {
       const boat = state.boats[i];
-      const p = view3D?.project(boat.lat,boat.lon,state) ?? geoToScreen(
+      const p = view3D?.project(boat.lat,boat.lon,state,0,boat.id) ?? geoToScreen(
         boat.lat, boat.lon, state.worldCX, state.worldCY,
         state.zoom, config.tileSize, state.width, state.height,
       );
       const dx = p.x - screenX;
       const dy = p.y - screenY;
-      if (dx * dx + dy * dy <= BOAT_HIT_RADIUS * BOAT_HIT_RADIUS) return boat;
+      if (dx * dx + dy * dy <= radius * radius) return boat;
     }
     return null;
   }
@@ -428,10 +430,9 @@ export function initEngine(
     onTap(screenX, screenY) {
       // Always check boat tap first (for follow camera)
       if (!state.editTool) {
+        // Tapping a boat toggles following it; tapping open water stops following.
         const boat = hitTestBoat(screenX, screenY);
-        if (boat) {
-          state.followBoatId = state.followBoatId === boat.id ? null : boat.id;
-        }
+        state.followBoatId = boat && state.followBoatId !== boat.id ? boat.id : null;
         return;
       }
 
@@ -530,11 +531,12 @@ export function initEngine(
   let backgroundCX = state.worldCX, backgroundCY = state.worldCY;
   let renderedTileRevision = -1;
   let previousSceneKey = '';
+  let overlayHidden = false;
 
   function frame(time: number) {
     if (!running) return;
     const interpolating=live && [...liveMotion.values()].some(m=>m.isMoving(time));
-    const fps=Math.min(uiBusy?20:60,state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30);
+    const fps=Math.min(uiBusy?30:60,state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30);
     const interval = 1000 / fps;
     if (lastTime && time - lastTime < interval - 1) {
       rafId = requestAnimationFrame(frame);
@@ -568,9 +570,16 @@ export function initEngine(
     background.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
     const sceneKey = `${key}/${state.worldCX}/${state.worldCY}/${sceneRevision}/${state.followBoatId}/${state.paused}`;
     const sceneChanged = !state.paused || sceneKey !== previousSceneKey;
+    if (overlayHidden) { overlayHidden = false; canvas.style.opacity = ''; }
     if (sceneChanged) renderFrame(ctx, state, config);
     previousSceneKey = sceneKey;
-    }else {view3D.render(state,config,time);view3D.renderOverlay(ctx,state);}
+    }else {
+      view3D.render(state,config,time);
+      // In 3D the 2D canvas only carries edit handles. Otherwise leave it untouched and invisible:
+      // clearing it every frame made the compositor blend a full-screen transparent layer each frame.
+      if(state.editTool){if(overlayHidden){overlayHidden=false;canvas.style.opacity='';}view3D.renderOverlay(ctx,state);}
+      else if(!overlayHidden){overlayHidden=true;ctx.clearRect(0,0,state.width,state.height);canvas.style.opacity='0';}
+    }
     callbacks.onView?.(view3D?view3D.heading:null,!!view3D&&(Math.abs(view3D.tilt-(state.followBoatId?63:74))>1||state.pitch!==null));
     if (lastSelection !== state.followBoatId) {
       lastSelection = state.followBoatId;
@@ -586,7 +595,7 @@ export function initEngine(
       const infos: BoatScreenInfo[] = [];
       const size = view3D ? view3D.boatPixels() : 44;
       for (const boat of state.boats) {
-        const p = view3D?.project(boat.lat,boat.lon,state) ?? geoToScreen(
+        const p = view3D?.project(boat.lat,boat.lon,state,0,boat.id) ?? geoToScreen(
           boat.lat, boat.lon, state.worldCX, state.worldCY,
           state.zoom, config.tileSize, state.width, state.height,
         );

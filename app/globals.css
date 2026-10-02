@@ -191,7 +191,7 @@ a { color: inherit; text-decoration: none; }
 /* Touch screens pinch to zoom; the layer switch lives in the view menu on phones. */
 @media (pointer: coarse) and (max-width: 699px) { .zoom-controls { display: none; } }
 /* Labels move every frame: a backdrop blur under each one is too costly on phones. */
-@media (max-width: 699px), (pointer: coarse) { .boat-label { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(8, 30, 32, .84); } }
+@media (max-width: 699px), (pointer: coarse) { .boat-label { -webkit-backdrop-filter: none; backdrop-filter: none; } .boat-label:not(.boat-label--selected) { background: rgba(8, 30, 32, .84); } }
 @media (max-width: 699px) { .map-tools > .map-tool:not(.map-compass):not(.map-edit) { display: none; } }
 
 /* ── View menu: inline on larger screens, one button on phones ── */

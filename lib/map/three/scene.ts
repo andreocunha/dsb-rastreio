@@ -67,6 +67,8 @@ export class RaceScene {
   fps=60;
   /** Frames deliberately held back (page UI busy): don't mistake them for a slow device. */
   throttled=false;
+  /** Per boat, eased world offset that keeps an enlarged hull from cutting through an enlarged buoy. */
+  private nudges=new Map<string,{x:number,z:number}>();
   constructor(private canvas:HTMLCanvasElement,private fallback:()=>void,private tiles:TileCache){
     this.low=window.innerWidth<700 || (navigator.hardwareConcurrency||4)<=4;
     this.renderer=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance',alpha:false});
@@ -81,9 +83,11 @@ export class RaceScene {
   renderOverlay(ctx:CanvasRenderingContext2D,state:MapState){
     courseOverlay(ctx,state,p=>this.project(p.lat,p.lon,state));
   }
-  project(lat:number,lon:number,state:MapState,height=0){
+  project(lat:number,lon:number,state:MapState,height=0,id?:string){
     const p=this.project_?.point(lat,lon);if(!p)return{x:-1000,y:-1000};
-    this.scratch.set(p.x,height,p.z).project(this.camera);
+    // A boat drawn nudged clear of a buoy: its label and tap target follow the drawn hull.
+    const nudge=id?this.nudges.get(id):undefined;
+    this.scratch.set(p.x+(nudge?.x??0),height,p.z+(nudge?.z??0)).project(this.camera);
     if(this.scratch.z>1)return{x:-1000,y:-1000};
     return{x:(this.scratch.x+1)*state.width/2,y:(1-this.scratch.y)*state.height/2};
   }
@@ -124,9 +128,24 @@ export class RaceScene {
     this.renderer.setClearColor(new T.Color('#0d2f33').multiply(new T.Color(...g.water)));
     return g;
   }
+  /** Offset that moves a hull (centre line along the heading) at least `clearance` from every buoy float. */
+  private clearOfBuoys(c:{x:number,z:number},heading:number,half:number,clearance:number,buoys:{x:number,z:number}[],radius:number){
+    const dx=Math.sin(heading),dz=-Math.cos(heading),out={x:0,z:0},need=clearance+radius;
+    for(const b of buoys){
+      const cx=c.x+out.x,cz=c.z+out.z;
+      if(Math.abs(b.x-cx)>half+need||Math.abs(b.z-cz)>half+need)continue;
+      const t=Math.max(-half,Math.min(half,(b.x-cx)*dx+(b.z-cz)*dz));
+      let vx=cx+dx*t-b.x,vz=cz+dz*t-b.z,d=Math.hypot(vx,vz);
+      if(d>=need)continue;
+      // Dead on the centre line: step sideways rather than along the course.
+      if(d<1e-3){vx=-dz;vz=dx;d=1;}
+      out.x+=vx/d*(need-d);out.z+=vz/d*(need-d);
+    }
+    return out;
+  }
   private removeBoat(id:string){
     const view=this.boats.get(id);if(!view)return;
-    this.scene.remove(view.model.root,view.wake.mesh);view.fx.dispose();view.wake.dispose();disposeBoat(view.model);this.boats.delete(id);
+    this.scene.remove(view.model.root,view.wake.mesh);view.fx.dispose();view.wake.dispose();disposeBoat(view.model);this.boats.delete(id);this.nudges.delete(id);
   }
   render(state:MapState,config:MapConfig,time:number){
     if(this.dead)return;
@@ -193,6 +212,9 @@ export class RaceScene {
     this.boatScale+=(scaleTarget-this.boatScale)*(this.frame?Math.min(1,dt*8):1);
     this.buoyScale=Math.max(1,Math.min(24,buoyPixels/(1.8*ppm)));
     const lightsOn=g.night>.25;
+    // Buoy floats are ~.85 m in radius before the zoomed-out enlargement.
+    const buoys=state.buoys.map(b=>project.point(b.lat,b.lon)),buoyRadius=.85*this.buoyScale;
+    const nudgeEase=state.reducedMotion?1:Math.min(1,dt*6);
     for(const boat of state.boats){
       const style=boatStyle(boat),styleKey=`${style.type}/${style.motors}/${style.color}`;
       let view=this.boats.get(boat.id);
@@ -204,6 +226,12 @@ export class RaceScene {
       }
       const {model,fx,wake}=view;
       const p=project.point(boat.lat,boat.lon),heading=boat.heading*Math.PI/180;
+      // Both boats and buoys are drawn larger than life when zoomed out, so a boat rounding a
+      // mark a few metres off would visibly sail through it. Push the drawn hull just clear.
+      const target=this.clearOfBuoys(p,heading,model.length*this.boatScale/2,(model.beam/2+.9)*this.boatScale,buoys,buoyRadius);
+      let nudge=this.nudges.get(boat.id);if(!nudge){nudge={x:target.x,z:target.z};this.nudges.set(boat.id,nudge);}
+      nudge.x+=(target.x-nudge.x)*nudgeEase;nudge.z+=(target.z-nudge.z)*nudgeEase;
+      p.x+=nudge.x;p.z+=nudge.z;
       model.root.position.set(p.x,0,p.z);model.root.rotation.y=-heading;model.root.scale.setScalar(this.boatScale);
       const phase=p.x*.017+p.z*.011;
       const speedFactor=Math.min(1,Math.max(0,boat.speed/9));

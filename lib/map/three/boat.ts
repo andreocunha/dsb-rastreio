@@ -90,8 +90,10 @@ void main(){gl_FragColor=vec4(color*light*(.82+.18*sin(vUv.x*5.)),1.);
 #include <colorspace_fragment>
 }`;
 
+// Opaque (opacity 1) but `transparent` for draw order. Double-sided ones must be single pass: otherwise
+// three.js draws them twice and flips needsUpdate between passes, re-validating the shader on every draw.
 const shared={
-  white:new T.MeshLambertMaterial({color:"#f4f2ea",transparent:true,side:T.DoubleSide}),
+  white:new T.MeshLambertMaterial({color:"#f4f2ea",transparent:true,side:T.DoubleSide,forceSinglePass:true}),
   dark:new T.MeshLambertMaterial({color:'#20262d',transparent:true}),
   metal:new T.MeshLambertMaterial({color:'#9aa3ab',transparent:true}),
   vest:new T.MeshLambertMaterial({color:'#ff6a1a',transparent:true}),
@@ -108,17 +110,17 @@ const lightGeometry=new T.SphereGeometry(.09,8,6);
  */
 function hullMaterials(color:string){
   const base=new T.Color(color);
-  const accent=new T.MeshLambertMaterial({color:base,emissive:base.clone().multiplyScalar(.34),transparent:true,side:T.DoubleSide});
-  const topside=new T.MeshLambertMaterial({color:base.clone().multiplyScalar(.62),emissive:base.clone().multiplyScalar(.16),transparent:true,side:T.DoubleSide});
+  const accent=new T.MeshLambertMaterial({color:base,emissive:base.clone().multiplyScalar(.34),transparent:true,side:T.DoubleSide,forceSinglePass:true});
+  const topside=new T.MeshLambertMaterial({color:base.clone().multiplyScalar(.62),emissive:base.clone().multiplyScalar(.16),transparent:true,side:T.DoubleSide,forceSinglePass:true});
   return {accent,topside};
 }
 
 const craftMaterials={
-  white:new T.MeshPhongMaterial({color:'#f3f5f6',shininess:60,specular:new T.Color('#3a4046'),transparent:true,side:T.DoubleSide}),
-  grey:new T.MeshLambertMaterial({color:'#c3cad0',transparent:true,side:T.DoubleSide}),
+  white:new T.MeshPhongMaterial({color:'#f3f5f6',shininess:60,specular:new T.Color('#3a4046'),transparent:true,side:T.DoubleSide,forceSinglePass:true}),
+  grey:new T.MeshLambertMaterial({color:'#c3cad0',transparent:true,side:T.DoubleSide,forceSinglePass:true}),
   charcoal:new T.MeshLambertMaterial({color:'#343b42',transparent:true}),
-  aluminium:new T.MeshPhongMaterial({color:'#d3dadf',shininess:60,specular:new T.Color('#4a5157'),transparent:true,side:T.DoubleSide}),
-  floor:new T.MeshLambertMaterial({color:'#b3bdc4',transparent:true,side:T.DoubleSide}),
+  aluminium:new T.MeshPhongMaterial({color:'#d3dadf',shininess:60,specular:new T.Color('#4a5157'),transparent:true,side:T.DoubleSide,forceSinglePass:true}),
+  floor:new T.MeshLambertMaterial({color:'#b3bdc4',transparent:true,side:T.DoubleSide,forceSinglePass:true}),
   rail:new T.MeshPhongMaterial({color:'#d5dbdf',shininess:80,transparent:true}),
   shirt:new T.MeshLambertMaterial({color:'#2f6fd6',transparent:true}),
   sleeve:new T.MeshLambertMaterial({color:'#1d232a',transparent:true}),
@@ -230,7 +232,7 @@ export function solarBoat(style:BoatStyle):BoatModel{
   const mastX=cat?1.14:-.45,mastZ=stern-.35;
   const mast=new T.Mesh(new T.CylinderGeometry(.025,.03,2.3,6),shared.metal);add(mast,mastX,deck+1.15,mastZ);
   const flagGeometry=new T.PlaneGeometry(.75,.48,8,1);flagGeometry.translate(.375,0,0);flagGeometry.rotateY(-Math.PI/2);
-  const flag=new T.Mesh(flagGeometry,new T.ShaderMaterial({vertexShader:flagVertex,fragmentShader:flagFragment,side:T.DoubleSide,transparent:true,
+  const flag=new T.Mesh(flagGeometry,new T.ShaderMaterial({vertexShader:flagVertex,fragmentShader:flagFragment,side:T.DoubleSide,forceSinglePass:true,transparent:true,
     uniforms:{time:{value:0},color:{value:new T.Color('#ffd21f')},light:{value:1}}}));
   add(flag,mastX,deck+2.02,mastZ);
   // Navigation lights: port red, starboard green, stern white. Only visible at night.

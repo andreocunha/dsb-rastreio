@@ -47,23 +47,25 @@ export const Fleet = memo(function Fleet({fleet, selected, demo, onSelect, onBus
     const chip = list.current?.querySelector<HTMLElement>(`[data-boat="${CSS.escape(selected)}"]`);
     chip?.scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'center'});
   }, [selected]);
-  // Busy from the first touch until the fling has settled.
+  // Busy from the first scroll under the finger until the fling has settled.
   useEffect(() => {
     const el = list.current;
     if (!el || !onBusy) return;
     let touching = false, busy = false, idle: ReturnType<typeof setTimeout> | undefined;
     const set = (value: boolean) => { if (value !== busy) { busy = value; onBusy(value); } };
-    const settle = () => { clearTimeout(idle); idle = setTimeout(() => { if (!touching) set(false); }, 180); };
-    const down = () => { touching = true; set(true); };
-    const up = () => { touching = false; settle(); };
-    const scroll = () => { set(true); settle(); };
-    el.addEventListener('pointerdown', down, {passive: true});
-    el.addEventListener('scroll', scroll, {passive: true});
-    for (const evt of ['pointerup', 'pointercancel'] as const) el.addEventListener(evt, up, {passive: true});
+    const settle = () => { clearTimeout(idle); idle = setTimeout(() => { if (!touching) set(false); }, 100); };
+    // A plain tap is not busy (the camera is about to fly to that boat); only a scroll the finger
+    // started, and its fling, is. Centring a tapped chip scrolls too, but no finger is down then.
+    // The browser cancels the pointer the moment it takes the touch over for scrolling.
+    const down = () => { touching = true; };
+    const up = () => { touching = false; if (busy) settle(); };
+    const cancel = () => { touching = false; set(true); settle(); };
+    const scroll = () => { if (touching || busy) { set(true); settle(); } };
+    const listeners = [['pointerdown', down], ['pointerup', up], ['pointercancel', cancel], ['scroll', scroll]] as const;
+    for (const [evt, fn] of listeners) el.addEventListener(evt, fn, {passive: true});
     return () => {
       clearTimeout(idle); set(false);
-      el.removeEventListener('pointerdown', down); el.removeEventListener('scroll', scroll);
-      for (const evt of ['pointerup', 'pointercancel'] as const) el.removeEventListener(evt, up);
+      for (const [evt, fn] of listeners) el.removeEventListener(evt, fn);
     };
   }, [onBusy]);
   const ordered = [...fleet].sort((a, b) => Number(support(a)) - Number(support(b)));
