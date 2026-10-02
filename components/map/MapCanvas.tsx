@@ -280,10 +280,11 @@ export default function MapCanvas() {
     setVenueId(venue.id);setActiveTool(null);setSelected(null);
     const url=new URL(location.href);url.searchParams.set('venue',venue.id);history.replaceState(null,'',url);
   }
-  function selectBoat(id: string) {
-    engineRef.current?.follow(selected === id ? null : id);
-    
-  }
+  // Stable callbacks: the fleet strip's chips stay memoised across the 2 Hz fleet refresh.
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+  const selectBoat = useCallback((id: string) => engineRef.current?.follow(selectedRef.current === id ? null : id), []);
+  const setUiBusy = useCallback((busy: boolean) => engineRef.current?.setUiBusy(busy), []);
   function changeStyle() {
     if(view3D){setPhotographic(!photographic);engineRef.current?.setPhotographic(!photographic);return;}
     const next = style === 'chart' ? 'satellite' : 'chart';
@@ -321,7 +322,7 @@ export default function MapCanvas() {
         <canvas ref={canvasRef} className="map-canvas" aria-label={`Mapa · ${venueById(venueId).name}. Arraste para explorar.`} />
         <BoatLabels ref={labelsRef} />
       </div>
-      <Fleet fleet={fleet} selected={selected} demo={demo} onSelect={selectBoat}/>
+      <Fleet fleet={fleet} selected={selected} demo={demo} onSelect={selectBoat} onBusy={setUiBusy}/>
 
       <div className="map-tools">
         <button ref={compassRef} className="map-tool map-compass" hidden onClick={() => engineRef.current?.resetView()} aria-label="Voltar ao norte e à vista de cima" title="Voltar ao norte (Ctrl/Shift + arrastar gira e inclina)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3l3.2 9H8.8z" fill="#d64541"/><path d="M12 21l-3.2-9h6.4z" fill="#9aa7a0"/><circle cx="12" cy="12" r="1.3" fill="#fff"/></svg></button>

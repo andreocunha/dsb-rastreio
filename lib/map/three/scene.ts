@@ -65,6 +65,8 @@ export class RaceScene {
   private local=new T.Vector2();
   /** Frame budget. Drops to 30 once on devices that cannot sustain 60. */
   fps=60;
+  /** Frames deliberately held back (page UI busy): don't mistake them for a slow device. */
+  throttled=false;
   constructor(private canvas:HTMLCanvasElement,private fallback:()=>void,private tiles:TileCache){
     this.low=window.innerWidth<700 || (navigator.hardwareConcurrency||4)<=4;
     this.renderer=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance',alpha:false});
@@ -130,10 +132,12 @@ export class RaceScene {
     if(this.dead)return;
     const elapsed=this.lastTime?time-this.lastTime:16.7;
     const dt=Math.min(.1,elapsed/1000);
-    this.interval+=(Math.min(100,elapsed)-this.interval)*.05;
-    // Sustained slow frames: first cap to 30 fps, then lower pixel density once.
-    if(this.lastTime&&this.fps===60&&this.frame>90&&this.interval>24)this.fps=30;
-    if(this.lastTime && elapsed>48)this.slow++;else this.slow=Math.max(0,this.slow-1);
+    if(!this.throttled){
+      this.interval+=(Math.min(100,elapsed)-this.interval)*.05;
+      // Sustained slow frames: first cap to 30 fps, then lower pixel density once.
+      if(this.lastTime&&this.fps===60&&this.frame>90&&this.interval>24)this.fps=30;
+      if(this.lastTime && elapsed>48)this.slow++;else this.slow=Math.max(0,this.slow-1);
+    }
     this.lastTime=time;
     if(this.slow>60 && this.ratio>.75){this.ratio=Math.max(.75,this.ratio*.8);this.size='';this.slow=0;}
     if(this.venue!==(state.venueId??'imboassica'))this.loadVenue(state.venueId??'imboassica');

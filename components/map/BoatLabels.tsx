@@ -9,6 +9,7 @@ type Label = {
   element: HTMLDivElement; name: HTMLSpanElement; speed: HTMLSpanElement;
   text: string; width: number; side: Side; blockedSince: number; freeSince: number;
   shown: boolean; ox: number; oy: number; placed: boolean; alpha: number; time: number;
+  color: string; followed: boolean;
 };
 type Box = { x: number; y: number; width: number; height: number };
 const HEIGHT = 22, GAP = 8, SWITCH_MS = 450, HIDE_MS = 700, SHOW_MS = 250;
@@ -48,12 +49,13 @@ export const BoatLabels = memo(forwardRef<BoatLabelsHandle>(function BoatLabels(
           const speed = document.createElement('span'); speed.className = 'boat-label__speed';
           element.append(dot, name, speed);
           container.appendChild(element);
-          label = {element, name, speed, text: '', width: 0, side: 'top', blockedSince: 0, freeSince: 0, shown: false, ox: 0, oy: 0, placed: false, alpha: 0, time: now};
+          label = {element, name, speed, text: '', width: 0, side: 'top', blockedSince: 0, freeSince: 0, shown: false, ox: 0, oy: 0, placed: false, alpha: 0, time: now, color: '', followed: false};
           elements.current.set(boat.id, label);
         }
         const el = label.element;
-        el.style.setProperty('--boat-color', boat.accentColor);
-        el.classList.toggle('boat-label--selected', boat.isFollowed);
+        // Per-frame path: only touch styles when they change.
+        if (label.color !== boat.accentColor) { label.color = boat.accentColor; el.style.setProperty('--boat-color', boat.accentColor); }
+        if (label.followed !== boat.isFollowed) { label.followed = boat.isFollowed; el.classList.toggle('boat-label--selected', boat.isFollowed); }
         const speedText = boat.isFollowed && boat.speed > 0 ? `${boat.speed.toFixed(1)} nós` : '';
         if (label.text !== boat.label + speedText) {
           label.name.textContent = boat.label;

@@ -172,10 +172,12 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 699px) {
   .fleet { left: 0; right: 0; width: auto; bottom: max(18px, calc(env(safe-area-inset-bottom) + 12px)); max-height: none; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 0; overflow: visible; }
   .fleet__head { display: none; }
-  .fleet__list { flex-direction: row; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 4px 12px 6px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  /* Own compositor layer, scrolls on the GPU thread; horizontal pans never reach the map behind. */
+  .fleet__list { flex-direction: row; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 4px 12px 6px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; transform: translateZ(0); contain: layout paint; }
   .fleet__list::-webkit-scrollbar { display: none; }
-  .fleet-chip { width: auto; flex: none; scroll-snap-align: center; padding: 4px 14px 4px 4px; border-radius: 999px; background: #fffff8f0; box-shadow: 0 3px 14px rgba(8,34,32,.18); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); gap: 8px; }
-  .fleet-chip:hover { background: #fffff8f0; }
+  /* No backdrop blur: over a live WebGL map it re-blurs every frame for each chip, which older phones can't keep up with. */
+  .fleet-chip { width: auto; flex: none; scroll-snap-align: center; padding: 4px 14px 4px 4px; border-radius: 999px; background: #fffff8fa; box-shadow: 0 2px 8px rgba(8,34,32,.2); gap: 8px; transition: none; touch-action: pan-x; }
+  .fleet-chip:hover { background: #fffff8fa; }
   .fleet-chip[aria-pressed=true] { background: #173532; }
   .fleet-chip__avatar { width: 34px; height: 34px; }
   .fleet-chip__text { gap: 1px; }
@@ -188,6 +190,8 @@ a { color: inherit; text-decoration: none; }
 }
 /* Touch screens pinch to zoom; the layer switch lives in the view menu on phones. */
 @media (pointer: coarse) and (max-width: 699px) { .zoom-controls { display: none; } }
+/* Labels move every frame: a backdrop blur under each one is too costly on phones. */
+@media (max-width: 699px), (pointer: coarse) { .boat-label { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(8, 30, 32, .84); } }
 @media (max-width: 699px) { .map-tools > .map-tool:not(.map-compass):not(.map-edit) { display: none; } }
 
 /* ── View menu: inline on larger screens, one button on phones ── */

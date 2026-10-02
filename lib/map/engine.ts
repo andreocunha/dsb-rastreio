@@ -91,6 +91,8 @@ export interface EngineAPI {
   follow: (id: string | null) => void;
   setStyle: (style: MapState['style']) => void;
   setPaused: (paused: boolean) => void;
+  /** The user is scrolling page UI (the fleet strip): render the map less often so the GPU stays free. */
+  setUiBusy: (busy: boolean) => void;
   addBuoy: (lat: number, lon: number) => Buoy;
   removeBuoy: (id: string) => void;
   getBuoys: () => Buoy[];
@@ -238,6 +240,7 @@ export function initEngine(
 
   let rafId = 0;
   let running = true;
+  let uiBusy = false;
 
   const recycledNumbers: number[] = [];
   let nextBuoyNumber = Math.max(0, ...state.buoys.map(b => b.number)) + 1;
@@ -531,7 +534,7 @@ export function initEngine(
   function frame(time: number) {
     if (!running) return;
     const interpolating=live && [...liveMotion.values()].some(m=>m.isMoving(time));
-    const fps=state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30;
+    const fps=Math.min(uiBusy?20:60,state.reducedMotion?15:view3D?view3D.fps:interpolating||state.dragging?60:live?15:30);
     const interval = 1000 / fps;
     if (lastTime && time - lastTime < interval - 1) {
       rafId = requestAnimationFrame(frame);
@@ -617,7 +620,7 @@ export function initEngine(
         const {RaceScene}=await import('./three/scene');
         if(!running || generation!==viewGeneration)return false;
         view3D=new RaceScene(target,()=>{view3D?.dispose();view3D=null;backgroundKey='';callbacks.on3DFallback?.();},tiles);
-        view3D.setLighting(lighting);view3D.setPhotographic(photographic);return true;
+        view3D.setLighting(lighting);view3D.setPhotographic(photographic);view3D.throttled=uiBusy;return true;
       }catch{callbacks.on3DFallback?.();return false;}
     },
     setLighting(mode){lighting=mode;view3D?.setLighting(mode);},
@@ -684,6 +687,7 @@ export function initEngine(
     follow(id) { state.followBoatId = state.boats.some(b => b.id === id) ? id : null; },
     setStyle(style) { state.style = style; },
     setPaused(paused) { state.paused = paused; },
+    setUiBusy(busy) { uiBusy = busy; if (view3D) view3D.throttled = busy; },
     addBuoy,
     removeBuoy,
     getBuoys: () => [...state.buoys],
