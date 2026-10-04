@@ -104,6 +104,10 @@ export default function MapCanvas() {
         if (!touched && performance.now() - openedAt < 15000) location.reload();
         else pending = true;
       };
+      // The worker asks open pages whether they update by themselves (older ones get reloaded by it).
+      const answer = (event: MessageEvent) => { if (event.data?.type === 'AUTO_UPDATE?') event.ports[0]?.postMessage('yes'); };
+      navigator.serviceWorker.addEventListener('message', answer);
+      cleanups.push(() => navigator.serviceWorker.removeEventListener('message', answer));
       addEventListener('pointerdown', touch, {passive: true, once: true});
       navigator.serviceWorker.addEventListener('controllerchange', onNewVersion);
       document.addEventListener('visibilitychange', reloadWhenHidden);

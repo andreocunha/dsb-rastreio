@@ -22,9 +22,9 @@ function harness({failInstall = false, offline = false} = {}) {
     async keys() { return [...stores.keys()]; },
     async delete(name) { return stores.delete(name); },
   };
-  const self = { DSB_BUILD: 'test', DSB_ASSETS: ['/', '/_next/static/app.js', '/_next/static/app.css'], location: {origin: 'https://race.test'}, clients: {claim: async () => {}}, skipWaiting: async () => { self.skipped = (self.skipped || 0) + 1; }, addEventListener: (type, fn) => {listeners[type] = fn;} };
+  const self = { DSB_BUILD: 'test', DSB_ASSETS: ['/', '/_next/static/app.js', '/_next/static/app.css'], location: {origin: 'https://race.test'}, clients: {claim: async () => {}, matchAll: async () => self.windows ?? []}, skipWaiting: async () => { self.skipped = (self.skipped || 0) + 1; }, addEventListener: (type, fn) => {listeners[type] = fn;} };
   class LocalRequest extends Request { constructor(input, options) { super(typeof input === 'string' ? new URL(input, self.location.origin) : input, options); } }
-  vm.runInNewContext(source, {self, caches, importScripts() {}, setTimeout, clearTimeout, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
+  vm.runInNewContext(source, {self, caches, importScripts() {}, setTimeout, clearTimeout, MessageChannel, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
   async function event(type, rest = {}) {
     const jobs = []; let response;
     listeners[type]({waitUntil: promise => jobs.push(promise), respondWith: promise => {response = promise;}, source: {postMessage: message => messages.push(message)}, ...rest});
@@ -101,4 +101,13 @@ test('updates apply by themselves: a new build activates once installed, and ope
   await offline.event('install');
   const fallback = await offline.event('fetch', {request: offline.fetchRequest('/', 'navigate')});
   assert.equal(fallback.status, 200, 'offline: the installed copy still opens');
+});
+
+test('pages from before automatic updates are reloaded once the new worker takes over; current ones and the admin are left alone', async () => {
+  const h = harness(), reloaded = [];
+  const page = (url, answers) => ({url, postMessage(message, [port]) { if (answers && message.type === 'AUTO_UPDATE?') port.postMessage('yes'); }, async navigate(to) { reloaded.push(to); }});
+  h.self.windows = [page('https://race.test/?demo=1', false), page('https://race.test/', true), page('https://race.test/admin', false)];
+  await h.event('activate');
+  await new Promise(resolve => setTimeout(resolve, 1700)); // pages that stay silent are given 1.5 s
+  assert.deepEqual(reloaded, ['https://race.test/?demo=1'], 'only the stuck legacy map page');
 });

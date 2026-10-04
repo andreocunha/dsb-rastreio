@@ -29,8 +29,30 @@ self.addEventListener('activate', event => {
     await Promise.all(previous.slice(0, -1).map(key => caches.delete(key)));
     await Promise.all(['map-tiles-v1', 'static-v1'].map(key => caches.delete(key)));
     await self.clients.claim();
+    // Not awaited: reloading a page needs this worker to answer its request, which only happens once
+    // activation has finished (awaiting here would deadlock).
+    reloadLegacyPages();
   })());
 });
+/**
+ * Map pages from before automatic updates wait for a click on "Nova versão disponível" that can no
+ * longer do anything (this worker has already taken over), so the notice would stay forever. Pages
+ * of the current generation answer this ping and reload themselves at a quiet moment; the silent
+ * ones are reloaded now. Only the map: never an organizer page with work in progress.
+ */
+async function reloadLegacyPages() {
+  const pages = (await self.clients.matchAll({type: 'window'})).filter(client => new URL(client.url).pathname === '/');
+  await Promise.all(pages.map(async client => {
+    const channel = new MessageChannel();
+    const current = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), 1500);
+      channel.port1.onmessage = () => { clearTimeout(timer); resolve(true); };
+      try { client.postMessage({type: 'AUTO_UPDATE?'}, [channel.port2]); } catch { clearTimeout(timer); resolve(false); }
+    });
+    channel.port1.close();
+    if (!current) client.navigate(client.url).catch(() => { /* closed meanwhile */ });
+  }));
+}
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
   if (event.data?.type === 'CHECK_OFFLINE') {
