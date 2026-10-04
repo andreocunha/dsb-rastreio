@@ -4,6 +4,8 @@ const SHELL = `dsb-shell-${self.DSB_BUILD}`;
 const TILES = 'dsb-satellite-v2';
 const ASSETS = new Set(self.DSB_ASSETS);
 const TILE_LIMIT = 120;
+/** How long opening the site waits for the network before using the installed copy. */
+const NAVIGATION_TIMEOUT = 2500;
 
 self.addEventListener('install', event => {
   // Installation is atomic: an offline-ready shell always includes its exact JS/CSS build.
@@ -15,6 +17,8 @@ self.addEventListener('install', event => {
       await caches.delete(SHELL);
       throw error;
     }
+    // Updates apply by themselves: no "update" button. Open pages decide when to reload (see MapCanvas).
+    await self.skipWaiting();
   })());
 });
 self.addEventListener('activate', event => {
@@ -43,9 +47,24 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin === self.location.origin) {
-    // HTML is tied to this worker's precached build; RSC, API, HMR and live data bypass it.
+    // The page: the latest deployment when the network answers quickly, so opening the site shows the
+    // new version straight away; the installed shell when offline or on a slow venue connection.
+    // RSC, API, HMR and live data bypass the worker.
     if (request.mode === 'navigate' && url.pathname === '/') {
-      event.respondWith((async () => (await (await caches.open(SHELL)).match('/')) || fetch(request))());
+      event.respondWith((async () => {
+        const cached = (await caches.open(SHELL)).match('/');
+        const network = fetch(request).then(response => response.ok ? response : Promise.reject(Error(String(response.status))));
+        network.catch(() => { /* answered from the installed copy */ });
+        let timer;
+        const slow = new Promise(resolve => { timer = setTimeout(resolve, NAVIGATION_TIMEOUT); });
+        try {
+          const first = await Promise.race([network, slow]);
+          if (first) return first;
+          return (await cached) || await network;
+        } catch {
+          return (await cached) || fetch(request);
+        } finally { clearTimeout(timer); }
+      })());
       return;
     }
     if ((ASSETS.has(url.pathname) && url.pathname !== '/') || url.pathname.startsWith('/_next/static/')) {

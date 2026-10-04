@@ -58,7 +58,6 @@ export default function MapCanvas() {
   const [selected, setSelected] = useState<string | null>(null);
   const [fleet, setFleet] = useState<Boat[]>([]);
   const [style, setStyle] = useState<'chart' | 'satellite'>('chart');
-  const [updateReady, setUpdateReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [live, setLive] = useState<{venue: string; course: string} | null>(null);
   const [saveState, setSaveState] = useState<{state: 'idle' | 'saving' | 'saved' | 'error'; message?: string}>({state: 'idle'});
@@ -71,7 +70,6 @@ export default function MapCanvas() {
   const [sosQueue,setSosQueue] = useState<PublicSos[]>([]);
   const dismissSos = useCallback(()=>setSosQueue(queue=>queue.slice(1)),[]);
 
-  const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const mobile = useSyncExternalStore(subscribeMobile, getMobile, serverMobile);
   const online = useSyncExternalStore(subscribeOnline, getOnline, serverOnline);
   const fitVisibleCourse = useCallback(() => {
@@ -91,17 +89,34 @@ export default function MapCanvas() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     let disposed = false;
+    let check: ReturnType<typeof setInterval> | undefined;
+    const cleanups: (() => void)[] = [];
     if (process.env.NODE_ENV === 'production') {
+      // New versions apply by themselves (no "update" button). The worker activates as soon as it
+      // has installed; here the page picks a moment that doesn't disturb anyone to reload:
+      // right away while the visitor is still settling in, otherwise when the app goes to the background.
+      const openedAt = performance.now(), updating = !!navigator.serviceWorker.controller;
+      let touched = false, pending = false;
+      const touch = () => { touched = true; };
+      const reloadWhenHidden = () => { if (pending && document.hidden) location.reload(); };
+      const onNewVersion = () => {
+        if (!updating || disposed) return; // first install: this page already runs the current version
+        if (!touched && performance.now() - openedAt < 15000) location.reload();
+        else pending = true;
+      };
+      addEventListener('pointerdown', touch, {passive: true, once: true});
+      navigator.serviceWorker.addEventListener('controllerchange', onNewVersion);
+      document.addEventListener('visibilitychange', reloadWhenHidden);
+      cleanups.push(() => { removeEventListener('pointerdown', touch); navigator.serviceWorker.removeEventListener('controllerchange', onNewVersion); document.removeEventListener('visibilitychange', reloadWhenHidden); });
       navigator.serviceWorker.register('/sw.js', {updateViaCache: 'none'}).then(registration => {
         if (disposed) return;
-        registrationRef.current = registration;
-        if (registration.waiting) setUpdateReady(true);
-        registration.addEventListener('updatefound', () => {
-          const worker = registration.installing;
-          worker?.addEventListener('statechange', () => {
-            if (!disposed && worker.state === 'installed' && navigator.serviceWorker.controller) setUpdateReady(true);
-          });
-        });
+        // A version installed by an older worker (that waited for the button): apply it now.
+        registration.waiting?.postMessage({type: 'SKIP_WAITING'});
+        // A race lasts hours: look for a new version every 15 minutes and whenever the app comes back.
+        const look = () => { if (!document.hidden) registration.update().catch(() => {}); };
+        check = setInterval(look, 15 * 60000);
+        document.addEventListener('visibilitychange', look);
+        cleanups.push(() => document.removeEventListener('visibilitychange', look));
       }).catch(() => { /* The chart remains usable if persistent storage is unavailable. */ });
     } else {
       // Production caches must never serve stale Next dev chunks or HMR responses.
@@ -110,7 +125,7 @@ export default function MapCanvas() {
       });
     }
     return () => {
-      disposed = true;
+      disposed = true; clearInterval(check); for (const cleanup of cleanups) cleanup();
     };
   }, []);
 
@@ -293,10 +308,6 @@ export default function MapCanvas() {
     const next = style === 'chart' ? 'satellite' : 'chart';
     setStyle(next); engineRef.current?.setStyle(next);
   }
-  function updateApp() {
-    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), {once: true});
-    registrationRef.current?.waiting?.postMessage({type: 'SKIP_WAITING'});
-  }
   const followed = fleet.find(b => b.id === selected);
   const currentCourse = venueId==='imboassica' && COURSE_PRESETS.find(p => p.id === courseId);
   // Without a published course yet, spectators see the first model.
@@ -352,7 +363,6 @@ export default function MapCanvas() {
         <div className="course-actions"><button disabled={!canUndo} onClick={() => engineRef.current?.undoCourse()}>Desfazer ajuste</button>{currentCourse && <button onClick={() => engineRef.current?.resetCourse()}>Restaurar modelo</button>}<button onClick={fitVisibleCourse}>Enquadrar prova</button></div>
         <div className={`saved-note ${saveState.state==='error' ? 'saved-note--error' : ''}`} role="status"><Icon name={saveState.state==='error' ? 'offline' : 'check'} size={13}/>{saveState.state==='saving' ? 'Salvando…' : saveState.state==='error' ? (saveState.message || 'Não foi possível salvar.') : isLive ? 'Salvo no servidor · o público vê em segundos' : 'Salvo no servidor · ainda não publicado'}</div>
       </section>}
-      {updateReady && <button className="update-notice" onClick={updateApp}>Nova versão disponível <strong>Atualizar ↗</strong></button>}
       {!online && style === 'satellite' && <div className="offline-notice" role="status">Satélite limitado às imagens já visitadas. <button onClick={changeStyle}>Usar mapa ilustrado</button></div>}
     </main>
   );

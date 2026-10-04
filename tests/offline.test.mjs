@@ -22,9 +22,9 @@ function harness({failInstall = false, offline = false} = {}) {
     async keys() { return [...stores.keys()]; },
     async delete(name) { return stores.delete(name); },
   };
-  const self = { DSB_BUILD: 'test', DSB_ASSETS: ['/', '/_next/static/app.js', '/_next/static/app.css'], location: {origin: 'https://race.test'}, clients: {claim: async () => {}}, skipWaiting: async () => {}, addEventListener: (type, fn) => {listeners[type] = fn;} };
+  const self = { DSB_BUILD: 'test', DSB_ASSETS: ['/', '/_next/static/app.js', '/_next/static/app.css'], location: {origin: 'https://race.test'}, clients: {claim: async () => {}}, skipWaiting: async () => { self.skipped = (self.skipped || 0) + 1; }, addEventListener: (type, fn) => {listeners[type] = fn;} };
   class LocalRequest extends Request { constructor(input, options) { super(typeof input === 'string' ? new URL(input, self.location.origin) : input, options); } }
-  vm.runInNewContext(source, {self, caches, importScripts() {}, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
+  vm.runInNewContext(source, {self, caches, importScripts() {}, setTimeout, clearTimeout, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
   async function event(type, rest = {}) {
     const jobs = []; let response;
     listeners[type]({waitUntil: promise => jobs.push(promise), respondWith: promise => {response = promise;}, source: {postMessage: message => messages.push(message)}, ...rest});
@@ -33,7 +33,7 @@ function harness({failInstall = false, offline = false} = {}) {
     return result;
   }
   const fetchRequest = (path, mode = 'cors') => ({url: new URL(path, self.location.origin).href, method: 'GET', mode});
-  return {event, fetchRequest, stores, caches, network, messages};
+  return {event, fetchRequest, stores, caches, network, messages, self};
 }
 
 test('installed HTML and its exact JS/CSS load offline without network access', async () => {
@@ -43,7 +43,8 @@ test('installed HTML and its exact JS/CSS load offline without network access', 
     const response = await h.event('fetch', {request: h.fetchRequest(path, mode)});
     assert.equal(response.status, 200);
   }
-  assert.deepEqual(h.network, []);
+  // Only the page itself tries the network first (for updates); the app files come from the shell.
+  assert.deepEqual(h.network, ['https://race.test/?source=installed']);
   await h.event('message', {data: {type: 'CHECK_OFFLINE'}});
   assert.equal(h.messages[0].ready, true);
 });
@@ -88,4 +89,16 @@ test('optional 3D chunks are not installed eagerly and are cached after first us
  assert.equal(await (await h.caches.open('dsb-shell-test')).match(path),undefined);
  await h.event('fetch',{request:h.fetchRequest(path)});assert.equal(h.network.length,1);
  await h.event('fetch',{request:h.fetchRequest(path)});assert.equal(h.network.length,1);
+});
+
+test('updates apply by themselves: a new build activates once installed, and opening the site online shows it', async () => {
+  const h = harness();
+  await h.event('install');
+  assert.equal(h.self.skipped, 1, 'no waiting for an "update" button');
+  const page = await h.event('fetch', {request: h.fetchRequest('/', 'navigate')});
+  assert.match(await page.text(), /^network/, 'online: the latest deployment, not the installed copy');
+  const offline = harness({offline: true});
+  await offline.event('install');
+  const fallback = await offline.event('fetch', {request: offline.fetchRequest('/', 'navigate')});
+  assert.equal(fallback.status, 200, 'offline: the installed copy still opens');
 });
