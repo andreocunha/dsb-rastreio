@@ -7,7 +7,8 @@ type Sprite = { mesh: T.Mesh<T.PlaneGeometry, T.MeshBasicMaterial>; key: string 
 /**
  * Boat names drawn by the 3D renderer, over the scene in screen pixels: about one draw call
  * each, in the same frame as the boats (no extra canvas or DOM layer to composite).
- * Bitmaps are rendered at the scene's pixel ratio, so texels match framebuffer pixels in size.
+ * Bitmaps are rendered at the device's full 3D pixel ratio, so they stay sharp and never re-render
+ * when the adaptive resolution changes.
  */
 export class LabelSprites {
   readonly scene = new T.Scene();
@@ -34,8 +35,8 @@ export class LabelSprites {
       if (sprite.key !== label.key) {
         mesh.material.map?.dispose();
         const texture = new T.CanvasTexture(label.bitmap);
-        texture.colorSpace = T.SRGBColorSpace; texture.generateMipmaps = false;
-        texture.minFilter = texture.magFilter = T.LinearFilter;
+        // Drawn at the device's full ratio; mipmaps keep it clean when the scene renders smaller.
+        texture.colorSpace = T.SRGBColorSpace; texture.minFilter = T.LinearMipmapLinearFilter; texture.magFilter = T.LinearFilter;
         mesh.material.map = texture; mesh.material.needsUpdate = true; sprite.key = label.key;
       }
       const w = label.bitmap.width / pixelRatio, h = label.bitmap.height / pixelRatio;

@@ -7,6 +7,7 @@ import { geoToWorld, geoToScreen, screenToGeo, bearing } from './geo';
 import { TileCache } from './tiles';
 import { renderFrame, renderBackground } from './renderer';
 import { LabelLayout, drawLabels } from './labels';
+import { refreshPeriod } from './pacing';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
 import { readCachedCourse, cacheCourse } from './storage';
@@ -244,9 +245,26 @@ export function initEngine(
     activeUntil = now() + ACTIVE_MS;
     if (wakeTimer !== undefined && running && !document.hidden) { clearTimeout(wakeTimer); wakeTimer = undefined; rafId = requestAnimationFrame(frame); }
   }
-  /** Next frame: on fast displays (120 Hz) don't wake the page on every vsync just to skip it. */
+  // Display refresh period, learnt from back-to-back animation frames (60, 90, 120 Hz… phones).
+  // Display refresh period, learnt from back-to-back animation frames (60, 90, 120 Hz… phones).
+  let vsync = 1000 / 60, lastCallback = 0, backToBack = false;
+  const refreshes: number[] = [];
+  function measureVsync(time: number) {
+    const d = time - lastCallback;
+    if (backToBack && lastCallback && d > 4 && d < 40) {
+      refreshes.push(d); if (refreshes.length > 40) refreshes.shift();
+      vsync = refreshPeriod(refreshes, vsync);
+    }
+    lastCallback = time; backToBack = true;
+  }
+  /** Frame interval for a wanted rate as a whole number of refreshes: even cadence, no 45 fps on 90 Hz when 60 is asked. */
+  const paced = (wanted: number) => Math.max(1, Math.floor(1000 / wanted / vsync + .25)) * vsync;
+  /**
+   * Next frame in `wait` ms. Don't wake the page on every refresh just to skip it: sleep until just
+   * after the refresh before the due one, then ask for an animation frame (it lands on the due one).
+   */
   function schedule(wait: number) {
-    if (wait > 10) wakeTimer = setTimeout(() => { wakeTimer = undefined; if (running) rafId = requestAnimationFrame(frame); }, wait - 9);
+    if (wait > vsync + 4) { backToBack = false; wakeTimer = setTimeout(() => { wakeTimer = undefined; if (running) rafId = requestAnimationFrame(frame); }, wait - vsync + 3); }
     else rafId = requestAnimationFrame(frame);
   }
 
@@ -547,12 +565,18 @@ export function initEngine(
   function frame(time: number) {
     if (!running) return;
     const interpolating=!view3D && live && [...liveMotion.values()].some(m=>m.isMoving(time));
+    measureVsync(time);
     const interactive = state.dragging || time < activeUntil || !!view3D?.moving;
-    const fps=state.reducedMotion?15:view3D?Math.min(view3D.fps,uiBusy||!interactive?ECO_FPS:60):interpolating||state.dragging?60:live?15:30;
-    // Deliberately held-back frames must not be read as a slow device.
-    if (view3D) view3D.throttled = fps < view3D.fps;
-    const interval = 1000 / fps;
-    if (lastTime && time - lastTime < interval - 1) {
+    let interval: number;
+    if (view3D) {
+      // Interactive: every refresh up to 60 fps (90 on a 90 Hz screen), halved on a struggling device; eco: 30.
+      const full = paced(60) * (view3D.halfRate ? 2 : 1);
+      const eco = paced(ECO_FPS) < 28 ? 2 * paced(ECO_FPS) : paced(ECO_FPS);
+      interval = state.reducedMotion ? paced(15) : uiBusy || !interactive ? Math.max(full, eco) : full;
+    } else interval = 1000 / (state.reducedMotion?15:interpolating||state.dragging?60:live?15:30);
+    // Diagnostics for on-device tuning (read by test scripts, invisible to users).
+    if (canvas.dataset && time - lastFleetTime > 450) { canvas.dataset.vsync = vsync.toFixed(1); canvas.dataset.interval = interval.toFixed(1); }
+    if (lastTime && time - lastTime < interval - (view3D ? vsync / 2 : 1)) {
       if (view3D) schedule(interval - (time - lastTime));
       else rafId = requestAnimationFrame(frame);
       return;
@@ -595,7 +619,7 @@ export function initEngine(
     }
     previousSceneKey = sceneKey;
     }else {
-      view3D.render(state,config,time);
+      view3D.render(state,config,time,interval,interactive&&!uiBusy);
       // In 3D the 2D canvas only carries edit handles. Otherwise leave it untouched and invisible:
       // clearing it every frame made the compositor blend a full-screen transparent layer each frame.
       if(state.editTool){if(overlayHidden){overlayHidden=false;canvas.style.opacity='';}view3D.renderOverlay(ctx,state);}
@@ -617,7 +641,7 @@ export function initEngine(
   }
 
   function visibility() {
-    cancelAnimationFrame(rafId);if(wakeTimer!==undefined){clearTimeout(wakeTimer);wakeTimer=undefined;}
+    cancelAnimationFrame(rafId);if(wakeTimer!==undefined){clearTimeout(wakeTimer);wakeTimer=undefined;}backToBack=false;
     lastTime = 0;view3D?.resetClock();
     if (!document.hidden && running) rafId = requestAnimationFrame(frame);
   }

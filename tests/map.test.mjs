@@ -414,3 +414,52 @@ test('boat names stay clear of hulls and of each other, fade in, and only re-ren
   // A boat that leaves the race takes its name with it.
   assert.ok(!layout.layout(fleet.slice(1), 400, 800, 1032, 2).some(l => l.id === 'a'));
 });
+
+test('frame budget: smooth while dragging, sharp while watching, and it remembers both', () => {
+  const {FrameBudget} = modules()('lib/map/three/quality.ts');
+  const store = new Map(), storage = {getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v)};
+  const budget = new FrameBudget(.57, storage);
+  let now = 0;
+  const run = (ms, elapsed, target, interactive) => { for (const end = now + ms; now < end; now += elapsed) budget.frame(elapsed, target, interactive, now); };
+  // A weak GPU dragging the map: every other frame missed at 60 fps.
+  run(3000, 25, 1000 / 60, true);
+  assert.ok(budget.scale < 1 && !budget.halfRate, 'resolution goes first');
+  run(20000, 25, 1000 / 60, true);
+  assert.equal(budget.halfRate, true, 'then half frame rate');
+  // At half rate it keeps up: the picture may sharpen again, but never above what failed at full rate first.
+  run(4000, 1000 / 30, 1000 / 30, true);
+  const dragging = budget.scale;
+  assert.ok(dragging < .8, 'still light while dragging');
+  // Hands off (eco, 30 fps) the same phone keeps up easily: its own, sharper level.
+  run(60000, 1000 / 30, 1000 / 30, false);
+  assert.equal(budget.scale, 1, 'sharp picture while watching');
+  // Back to dragging: the light level comes back at once.
+  run(100, 1000 / 30, 1000 / 30, true);
+  assert.equal(budget.scale, dragging, 'the light level comes back as soon as the map is dragged');
+  const saved = JSON.parse(store.get('dsb:map:quality-v3'));
+  assert.equal(saved.eco, 1); assert.equal(saved.halfRate, true);
+  const next = new FrameBudget(.57, storage);
+  assert.equal(next.halfRate, true, 'a phone known to struggle opens at half rate');
+  assert.equal(next.scale, 1, 'and opens sharp (eco) instead of blurry');
+  assert.equal(new FrameBudget(.57, {getItem() { throw Error('blocked'); }}).scale, 1, 'storage errors are harmless');
+  const weak = new FrameBudget(.4, null, 'k', .42, .7);
+  assert.equal(weak.scale, .7, 'weak GPUs watch at a sharp level from the first visit');
+  weak.frame(16, 1000 / 60, true, 0); assert.equal(weak.scale, .42, 'and drag at a light one');
+});
+
+test('entry-level GPUs start at a lower resolution; mid and high-end ones at full', () => {
+  const {weakGpu} = modules()('lib/map/three/quality.ts');
+  for (const gpu of ['ANGLE (ARM, Mali-G52 MC2, OpenGL ES 3.2)', 'Mali-G57 MC2', 'Mali-G57 MC3', 'Mali-T830 MP2', 'Mali-400 MP', 'ANGLE (Qualcomm, Adreno (TM) 610, OpenGL ES 3.2)', 'Adreno (TM) 506', 'PowerVR Rogue GE8320'])
+    assert.equal(weakGpu(gpu), true, gpu);
+  for (const gpu of ['ANGLE (ARM, Mali-G68 MC4, OpenGL ES 3.2)', 'Mali-G76 MP12', 'Mali-G710 MC10', 'Mali-G615 MC6', 'ANGLE (Qualcomm, Adreno (TM) 640, OpenGL ES 3.2)', 'Adreno (TM) 730', 'Apple GPU', ''])
+    assert.equal(weakGpu(gpu), false, gpu);
+});
+
+test('refresh period is learnt from agreeing frames, not from a lone odd one', () => {
+  const {refreshPeriod} = modules()('lib/map/pacing.ts');
+  const near = (a, b) => Math.abs(a - b) < .2;
+  assert.ok(near(refreshPeriod([...Array(30).fill(11.1), 5.6], 16.7), 11.1), 'an outlier is ignored (90 Hz)');
+  assert.ok(near(refreshPeriod(Array(40).fill(16.7), 11.1), 16.7), 'follows a switch to 60 Hz');
+  assert.ok(near(refreshPeriod([...Array(20).fill(22.2), ...Array(12).fill(11.1), ...Array(8).fill(33.3)], 16.7), 11.1), 'skipped frames do not hide the real period');
+  assert.equal(refreshPeriod([8.3, 8.4], 16.7), 16.7, 'too few samples: keep the previous estimate');
+});

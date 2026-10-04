@@ -33,7 +33,7 @@ export class Imagery {
       if(!mesh){
         const texture=new T.Texture(image);texture.colorSpace=T.SRGBColorSpace;texture.anisotropy=4;texture.needsUpdate=true;
         const material=groundMaterial(this.uniforms,texture);
-        mesh=new T.Mesh(this.geometry,material);mesh.rotation.x=-Math.PI/2;mesh.renderOrder=-100+z;mesh.frustumCulled=false;
+        mesh=new T.Mesh(this.geometry,material);mesh.rotation.x=-Math.PI/2;mesh.renderOrder=-100-z;mesh.frustumCulled=false;
         const n=2**z,size=this.project.meters/n;
         mesh.scale.set(size,size,1);
         mesh.position.set(((tx+.5)/n-this.project.origin.x)*this.project.meters,.001*z,((ty+.5)/n-this.project.origin.y)*this.project.meters);

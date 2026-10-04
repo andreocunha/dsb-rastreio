@@ -6,7 +6,6 @@ export interface BoatStyle {type:BoatType;motors:number;color:string}
 export interface BoatModel {
   root:T.Group;
   body:T.Group;
-  flag:T.Mesh<T.BufferGeometry,T.ShaderMaterial>;
   lights:T.Group;
   /** Stern-mounted outboards, metres from the centre line. */
   motorOffsets:number[];
@@ -85,17 +84,11 @@ function panels(){
   return panelTexture;
 }
 
-const flagVertex=`uniform float time;varying vec2 vUv;
-void main(){vUv=uv;vec3 p=position;float t=uv.x;p.z+=sin(t*5.-time*7.)*.09*t;p.y+=sin(t*3.-time*5.)*.03*t;
-gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);}`;
-const flagFragment=`uniform vec3 color;uniform float light;varying vec2 vUv;
-void main(){gl_FragColor=vec4(color*light*(.82+.18*sin(vUv.x*5.)),1.);
-#include <colorspace_fragment>
-}`;
 
 // Opaque (opacity 1) but `transparent` for draw order. Double-sided ones must be single pass: otherwise
 // three.js draws them twice and flips needsUpdate between passes, re-validating the shader on every draw.
 const shared={
+  flag:new T.MeshLambertMaterial({color:'#ffd21f',emissive:'#5a4400',transparent:true,side:T.DoubleSide,forceSinglePass:true}),
   white:new T.MeshLambertMaterial({color:"#f4f2ea",transparent:true,side:T.DoubleSide,forceSinglePass:true}),
   dark:new T.MeshLambertMaterial({color:'#20262d',transparent:true}),
   metal:new T.MeshLambertMaterial({color:'#9aa3ab',transparent:true}),
@@ -178,11 +171,8 @@ function craft(style:BoatStyle):BoatModel{
   }
   const lamp=(color:string,x:number,y:number,z:number)=>{const l=new T.Mesh(lightGeometry,new T.MeshBasicMaterial({color,transparent:true}));l.position.set(x,y,z);lights.add(l);};
   lamp('#ff3b30',-beam/2+.1,.8,-length/2+.6);lamp('#34ff7a',beam/2-.1,.8,-length/2+.6);lamp('#fff6d8',0,1.6,.2);
-  // Invisible stand-in keeps the flag API uniform.
-  const flag=new T.Mesh(new T.PlaneGeometry(.01,.01),new T.ShaderMaterial({vertexShader:flagVertex,fragmentShader:flagFragment,visible:false,uniforms:{time:{value:0},color:{value:new T.Color()},light:{value:1}}}));
-  body.add(flag);
-  merge(body,new Set<T.Object3D>([flag,lights]));mergeLights(lights);
-  return {root,body,flag,lights,motorOffsets:[0],length,beam,hulls:[new T.Vector4(0,0,beam/2,length/2)],style:`${style.type}/${style.motors}/${style.color}`};
+  merge(body,new Set<T.Object3D>([lights]));mergeLights(lights);
+  return {root,body,lights,motorOffsets:[0],length,beam,hulls:[new T.Vector4(0,0,beam/2,length/2)],style:`${style.type}/${style.motors}/${style.color}`};
 }
 
 export function solarBoat(style:BoatStyle):BoatModel{
@@ -235,14 +225,16 @@ export function solarBoat(style:BoatStyle):BoatModel{
   const mastX=cat?1.14:-.45,mastZ=stern-.35;
   const mast=new T.Mesh(new T.CylinderGeometry(.025,.03,2.3,6),shared.metal);add(mast,mastX,deck+1.15,mastZ);
   const flagGeometry=new T.PlaneGeometry(.75,.48,8,1);flagGeometry.translate(.375,0,0);flagGeometry.rotateY(-Math.PI/2);
-  const flag=new T.Mesh(flagGeometry,new T.ShaderMaterial({vertexShader:flagVertex,fragmentShader:flagFragment,side:T.DoubleSide,forceSinglePass:true,transparent:true,
-    uniforms:{time:{value:0},color:{value:new T.Color('#ffd21f')},light:{value:1}}}));
+  // Waves in the body shader: each vertex carries how far it is from the mast, and the boat's phase.
+  const phase=Math.random()*Math.PI*2,uvs=flagGeometry.getAttribute('uv');
+  flagGeometry.setAttribute('wave',new T.Float32BufferAttribute(Array.from({length:uvs.count},(_,i)=>[uvs.getX(i),phase]).flat(),2));
+  const flag=new T.Mesh(flagGeometry,shared.flag);
   add(flag,mastX,deck+2.02,mastZ);
   // Navigation lights: port red, starboard green, stern white. Only visible at night.
   const lamp=(color:string,x:number,y:number,z:number)=>{const m=new T.Mesh(lightGeometry,new T.MeshBasicMaterial({color,transparent:true}));m.position.set(x,y,z);lights.add(m);};
   lamp('#ff3b30',-beam/2+.1,deck+.12,-length/2+.9);lamp('#34ff7a',beam/2-.1,deck+.12,-length/2+.9);lamp('#fff6d8',mastX,deck+2.3,mastZ);
-  merge(body,new Set<T.Object3D>([flag,lights]));mergeLights(lights);
-  return {root,body,flag,lights,motorOffsets:motorBase,length,beam,hulls,style:`${style.type}/${style.motors}/${style.color}`};
+  merge(body,new Set<T.Object3D>([lights]));mergeLights(lights);
+  return {root,body,lights,motorOffsets:motorBase,length,beam,hulls,style:`${style.type}/${style.motors}/${style.color}`};
 }
 
 /**
@@ -252,9 +244,12 @@ export function solarBoat(style:BoatStyle):BoatModel{
  * per-draw overhead is what limits mid-range phones with 13 boats on screen.
  */
 const bodyMaterial=new T.MeshLambertMaterial({vertexColors:true,transparent:true,side:T.DoubleSide,forceSinglePass:true});
+/** Shared clock for the flags' waving (seconds). */
+export const boatTime={value:0};
 bodyMaterial.onBeforeCompile=shader=>{
-  shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 glow;\nvarying vec3 vGlow;')
-    .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=glow;');
+  shader.uniforms.time=boatTime;
+  shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 glow;\nattribute vec2 wave;\nuniform float time;\nvarying vec3 vGlow;')
+    .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=glow;\n// Race flag: ripples grow from the mast to the tip.\nfloat t=wave.x;if(t>0.){transformed.z+=sin(t*5.-time*7.+wave.y)*.09*t;transformed.y+=sin(t*3.-time*5.+wave.y)*.03*t;}');
   shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow;')
     .replace('vec3 totalEmissiveRadiance = emissive;','vec3 totalEmissiveRadiance = emissive + vGlow;');
 };
@@ -288,11 +283,12 @@ function merge(body:T.Group,keep:Set<T.Object3D>){
     const groups=source.groups.length?source.groups:[{start:0,count:source.getAttribute('position').count,materialIndex:0}];
     for(const g of groups){
       const piece=new T.BufferGeometry();
-      for(const name of ['position','normal','uv'] as const){
+      for(const name of ['position','normal','uv','wave'] as const){
         const attribute=source.getAttribute(name) as T.BufferAttribute|undefined;
         if(attribute)piece.setAttribute(name,new T.BufferAttribute((attribute.array as Float32Array).slice(g.start*attribute.itemSize,(g.start+g.count)*attribute.itemSize),attribute.itemSize));
       }
       if(!piece.getAttribute('uv'))piece.setAttribute('uv',new T.BufferAttribute(new Float32Array(g.count*2),2));
+      if(!piece.getAttribute('wave'))piece.setAttribute('wave',new T.BufferAttribute(new Float32Array(g.count*2),2));
       piece.applyMatrix4(child.matrix);
       // A single material covers every group (a cylinder's caps are groups 1 and 2).
       let m=Array.isArray(child.material)?materials[g.materialIndex??0]:child.material as T.Material;
