@@ -174,6 +174,8 @@ a { color: inherit; text-decoration: none; }
   /* The selected chip already shows speed: no separate card on phones. */
   .follow-card { display: none !important; }
   .map-tools { bottom: max(76px, calc(env(safe-area-inset-bottom) + 66px)) !important; right: 12px; }
+  /* No boat strip at the bottom (nobody on the water): the buttons sit at the edge. */
+  .race-app--no-fleet .map-tools { bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px)) !important; }
 }
 /* Touch screens pinch to zoom; the layer switch lives in the view menu on phones. */
 @media (pointer: coarse) and (max-width: 699px) { .zoom-controls { display: none; } }
@@ -181,18 +183,20 @@ a { color: inherit; text-decoration: none; }
 
 /* ── View menu: inline on larger screens, one button on phones ── */
 .view-toggle { display: none; }
-/* Large screens: Simplificado | 3D with the satellite switch beside it, always visible. */
-.view-panel { display: flex; align-items: center; gap: 8px; }
-.view-layer { display: flex; align-items: center; gap: 7px; padding: 9px 13px; border: 1px solid #e3e9e0; border-radius: 13px; background: #fffef7f5; color: #4e6458; font: 600 12px system-ui, sans-serif; box-shadow: var(--shadow); white-space: nowrap; }
-.view-layer[aria-pressed=true] { background: #286853; border-color: #286853; color: #fffbe9; }
+/* Large screens: one block, Simplificado | 3D | Satélite, always visible. */
+.view-panel { display: flex; align-items: center; gap: 3px; padding: 4px; border: 1px solid #e3e9e0; border-radius: 13px; background: #fffef7f5; box-shadow: var(--shadow); }
+.view-panel .view-switch { padding: 0; border: 0; background: none; box-shadow: none; }
+.view-layer { display: flex; align-items: center; gap: 6px; padding: 9px 13px; border-radius: 9px; background: transparent; color: #6f8176; font: 600 12px system-ui, sans-serif; white-space: nowrap; }
+.view-layer::before { content: ''; align-self: stretch; width: 1px; margin: -2px 6px -2px -10px; background: #e3e9e0; }
+.view-layer[aria-pressed=true] { background: #286853; color: #fffbe9; }
 @media (max-width: 699px) {
   .view-toggle { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: #fffff8f2; color: #2f5448; box-shadow: var(--shadow); }
   .view-panel { display: none; flex-direction: column; position: absolute; top: 50px; right: 0; padding: 10px; border-radius: 16px; background: #fffff8f7; box-shadow: 0 8px 30px rgba(8,34,32,.2); min-width: 220px; align-items: stretch; }
   .view-controls--open .view-panel { display: flex; }
-  .view-panel .view-switch { box-shadow: none; border: 0; background: #eef3ec; }
+  .view-panel { gap: 8px; border: 0; }
+  .view-panel .view-switch { padding: 4px; box-shadow: none; border: 0; background: #eef3ec; }
+  .view-layer::before { display: none; }
   .view-panel .view-switch button { flex: 1; font-size: 12px; padding: 10px 8px; }
-  .view-panel .light-picker { box-shadow: none; background: #eef3ec; padding: 10px 12px; }
-  .view-panel .light-picker select { font-size: 13px; max-width: none; flex: 1; }
   .view-layer { display: flex; gap: 8px; align-items: center; padding: 11px 12px; border: 0; box-shadow: none; border-radius: 10px; background: #eef3ec; color: #2f5448; font: 600 12px system-ui, sans-serif; }
   .view-layer[aria-pressed=true] { background: #286853; color: #fffbe9; }
 }

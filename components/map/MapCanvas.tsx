@@ -313,7 +313,7 @@ export default function MapCanvas() {
   const isLive = (live?.venue ?? 'imboassica') === venueId && (live?.course ?? COURSE_PRESETS[0].id) === courseId;
 
   return (
-    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''}`}>
+    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
       {feedStatus && <div className="tracker-feed" role="status">{feedStatus}</div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
