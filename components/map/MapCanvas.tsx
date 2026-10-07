@@ -321,7 +321,7 @@ export default function MapCanvas() {
       </div>}
       {sosQueue[0] && <SosNotice key={sosQueue[0][0]} notice={sosQueue[0]} onClose={dismissSos} canFollow={fleet.some(b=>b.id===sosQueue[0][1])} onFollow={()=>{engineRef.current?.follow(sosQueue[0][1]);dismissSos();}}/>}
       <div className={`view-controls ${viewMenu?'view-controls--open':''}`} aria-label="Visualização do mapa">
-        <button className="view-toggle" onClick={()=>setViewMenu(!viewMenu)} aria-expanded={viewMenu} aria-label="Ajustes de visualização"><Icon name={viewMenu?'close':'sun'} size={18}/></button>
+        <button className="view-toggle" onClick={()=>setViewMenu(!viewMenu)} aria-expanded={viewMenu} aria-label="Ajustes de visualização"><Icon name={viewMenu?'close':'layers'} size={18}/></button>
         <div className="view-panel">
           <div className="view-switch"><button onClick={()=>void changeView(false)} aria-pressed={!view3D} disabled={loading3D}>Simplificado</button><button onClick={()=>void changeView(true)} aria-pressed={view3D} disabled={loading3D}>{loading3D?'Preparando…':'3D'}</button></div>
           <button className="view-layer" onClick={changeStyle} aria-pressed={view3D?photographic:style==='satellite'}><Icon name="layers" size={15}/>{(view3D?photographic:style==='satellite')?'Satélite':'Mapa ilustrado'}</button>
@@ -338,8 +338,7 @@ export default function MapCanvas() {
       <div className="map-tools">
         <button ref={compassRef} className="map-tool map-compass" hidden onClick={() => engineRef.current?.resetView()} aria-label="Voltar ao norte e à vista de cima" title="Voltar ao norte (Ctrl/Shift + arrastar gira e inclina)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3l3.2 9H8.8z" fill="#d64541"/><path d="M12 21l-3.2-9h6.4z" fill="#9aa7a0"/><circle cx="12" cy="12" r="1.3" fill="#fff"/></svg></button>
         <div className="zoom-controls"><button onClick={() => engineRef.current?.zoom(0.5)} aria-label="Aproximar"><Icon name="plus"/></button><button onClick={() => engineRef.current?.zoom(-0.5)} aria-label="Afastar"><Icon name="minus"/></button></div>
-        <button className="map-tool" onClick={changeStyle} aria-label={(view3D?photographic:style==='satellite')?'Ver mapa ilustrado':'Ver satélite'} title={(view3D?photographic:style==='satellite')?'Ver mapa ilustrado':'Ver satélite'} aria-pressed={view3D?photographic:style==='satellite'}><Icon name="layers"/></button>
-        {(adminInvited || isAdmin) && !demo && <button className="map-admin" aria-expanded={adminOpen} onClick={() => setAdminOpen(!adminOpen)}><Icon name="settings" size={15}/>Organização</button>}
+        {(adminInvited || isAdmin) && !demo && <button className="map-tool map-admin" aria-expanded={adminOpen} aria-label="Painel da organização" title="Organização" onClick={() => setAdminOpen(!adminOpen)}><Icon name="shield"/></button>}
         {isAdmin&&!demo&&!embed&&<button className="map-tool map-edit" aria-label="Editar circuito" title="Editar circuito" aria-expanded={editing} aria-controls="course-editor" onClick={toggleEditor}><Icon name="settings"/></button>}
       </div>
 

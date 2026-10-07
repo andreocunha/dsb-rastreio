@@ -69,6 +69,8 @@ export const Fleet = memo(function Fleet({fleet, selected, demo, onSelect, onBus
     };
   }, [onBusy]);
   const ordered = [...fleet].sort((a, b) => Number(support(a)) - Number(support(b)));
+  // No boat on the water yet: nothing to show (no empty card over the map).
+  if (!fleet.length) return null;
   return (
     <nav className="fleet" aria-label="Embarcações">
       <div className="fleet__head"><span className="eyebrow">{demo ? 'DEMONSTRAÇÃO' : 'AO VIVO'}</span><strong>Embarcações <span className="count-badge">{fleet.filter(b => !support(b)).length}</span></strong></div>
@@ -80,7 +82,6 @@ export const Fleet = memo(function Fleet({fleet, selected, demo, onSelect, onBus
           return <FleetChip key={boat.id} id={boat.id} label={boat.label} logo={boat.logo} accentColor={boat.accentColor}
             role={role} detail={speed} pressed={selected === boat.id} onSelect={onSelect}/>;
         })}
-        {fleet.length === 0 && <p className="fleet__empty">Nenhum barco na água agora.</p>}
       </div>
     </nav>
   );

@@ -177,21 +177,23 @@ a { color: inherit; text-decoration: none; }
 }
 /* Touch screens pinch to zoom; the layer switch lives in the view menu on phones. */
 @media (pointer: coarse) and (max-width: 699px) { .zoom-controls { display: none; } }
-@media (max-width: 699px) { .map-tools > .map-tool:not(.map-compass):not(.map-edit) { display: none; } }
+@media (max-width: 699px) { .map-tools > .map-tool:not(.map-compass):not(.map-edit):not(.map-admin) { display: none; } }
 
 /* ── View menu: inline on larger screens, one button on phones ── */
 .view-toggle { display: none; }
-.view-panel { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.view-layer { display: none; }
+/* Large screens: Simplificado | 3D with the satellite switch beside it, always visible. */
+.view-panel { display: flex; align-items: center; gap: 8px; }
+.view-layer { display: flex; align-items: center; gap: 7px; padding: 9px 13px; border: 1px solid #e3e9e0; border-radius: 13px; background: #fffef7f5; color: #4e6458; font: 600 12px system-ui, sans-serif; box-shadow: var(--shadow); white-space: nowrap; }
+.view-layer[aria-pressed=true] { background: #286853; border-color: #286853; color: #fffbe9; }
 @media (max-width: 699px) {
   .view-toggle { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: #fffff8f2; color: #2f5448; box-shadow: var(--shadow); }
-  .view-panel { display: none; position: absolute; top: 50px; right: 0; padding: 10px; border-radius: 16px; background: #fffff8f7; box-shadow: 0 8px 30px rgba(8,34,32,.2); min-width: 220px; align-items: stretch; }
+  .view-panel { display: none; flex-direction: column; position: absolute; top: 50px; right: 0; padding: 10px; border-radius: 16px; background: #fffff8f7; box-shadow: 0 8px 30px rgba(8,34,32,.2); min-width: 220px; align-items: stretch; }
   .view-controls--open .view-panel { display: flex; }
   .view-panel .view-switch { box-shadow: none; border: 0; background: #eef3ec; }
   .view-panel .view-switch button { flex: 1; font-size: 12px; padding: 10px 8px; }
   .view-panel .light-picker { box-shadow: none; background: #eef3ec; padding: 10px 12px; }
   .view-panel .light-picker select { font-size: 13px; max-width: none; flex: 1; }
-  .view-layer { display: flex; gap: 8px; align-items: center; padding: 11px 12px; border-radius: 10px; background: #eef3ec; color: #2f5448; font: 600 12px system-ui, sans-serif; }
+  .view-layer { display: flex; gap: 8px; align-items: center; padding: 11px 12px; border: 0; box-shadow: none; border-radius: 10px; background: #eef3ec; color: #2f5448; font: 600 12px system-ui, sans-serif; }
   .view-layer[aria-pressed=true] { background: #286853; color: #fffbe9; }
 }
 /* Inside the DSB app: only the map, the fleet and a small status. */
@@ -203,6 +205,5 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 699px) { .race-app:not(.race-app--demo):not(.race-app--embed) .demo-controls { top: 146px; } .race-app--embed:not(.race-app--demo) .demo-controls { top: 58px; } }
 .publish-row{margin-top:12px}.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#1d7a55;background:#e3f3ea;padding:7px 10px;border-radius:999px}.publish-button{width:100%;padding:11px 12px;border-radius:10px;background:#1f4d42;color:#fffbe9;font:700 12px system-ui,sans-serif}.publish-button:hover{background:#286853}
 /* Organizers only (the DSB app adds ?admin=1, or an organizer session exists): opens the panel. */
-.map-admin { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: 999px; background: #422378; color: #fff; font-size: 12px; font-weight: 600; letter-spacing: .2px; box-shadow: 0 6px 18px #2a1d4033; white-space: nowrap; }
-.map-admin:hover { background: #4f2b8f; }
-.map-admin[aria-expanded=true] { background: #2c1752; }
+.map-tool.map-admin { color: #422378; }
+.map-tool.map-admin[aria-expanded=true] { background: #422378; color: #fff; }

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-type Name = 'sun' | 'waves' | 'layers' | 'target' | 'plus' | 'minus' | 'chevron' | 'close' | 'settings' | 'boat' | 'pause' | 'play' | 'check' | 'offline' | 'buoy' | 'route' | 'flag' | 'tool' | 'arrow' | 'info';
+type Name = 'sun' | 'waves' | 'layers' | 'target' | 'plus' | 'minus' | 'chevron' | 'close' | 'settings' | 'boat' | 'pause' | 'play' | 'check' | 'offline' | 'buoy' | 'route' | 'flag' | 'tool' | 'arrow' | 'shield' | 'info';
 const paths: Record<Name, React.ReactNode> = {
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></>,
   sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></>,
@@ -17,6 +17,7 @@ const paths: Record<Name, React.ReactNode> = {
   flag: <><path d="M5 21V3m0 0c6-4 8 4 14 0v10c-6 4-8-4-14 0"/><path d="M12 3v10M5 8h14"/></>,
   tool: <path d="m14 5 5 5M4 20l5-1 11-11-4-4L5 15l-1 5Z"/>,
   arrow: <path d="M12 20V4m-6 6 6-6 6 6"/>,
+  shield: <><path d="M12 3 5 6v6c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></>,
 };
 export function Icon({ name, size = 20, style }: {name: Name; size?: number; style?: CSSProperties}) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}>{paths[name]}</svg>;
