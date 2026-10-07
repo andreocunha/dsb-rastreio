@@ -324,7 +324,7 @@ export default function MapCanvas() {
         <button className="view-toggle" onClick={()=>setViewMenu(!viewMenu)} aria-expanded={viewMenu} aria-label="Ajustes de visualização"><Icon name={viewMenu?'close':'layers'} size={18}/></button>
         <div className="view-panel">
           <div className="view-switch"><button onClick={()=>void changeView(false)} aria-pressed={!view3D} disabled={loading3D}>Simplificado</button><button onClick={()=>void changeView(true)} aria-pressed={view3D} disabled={loading3D}>{loading3D?'Preparando…':'3D'}</button></div>
-          <button className="view-layer" onClick={changeStyle} aria-pressed={view3D?photographic:style==='satellite'}><Icon name="layers" size={15}/>{(view3D?photographic:style==='satellite')?'Satélite':'Mapa ilustrado'}</button>
+          <button className="view-layer" onClick={changeStyle} aria-pressed={view3D?photographic:style==='satellite'} aria-label={(view3D?photographic:style==='satellite')?'Satélite':'Mapa ilustrado'} title={(view3D?photographic:style==='satellite')?'Satélite (toque para o mapa ilustrado)':'Mapa ilustrado (toque para o satélite)'}><Icon name="layers" size={15}/><span className="view-layer-label">{(view3D?photographic:style==='satellite')?'Satélite':'Mapa ilustrado'}</span></button>
         </div>
       </div>
       {viewMessage && <div className="view-message" role="status">{viewMessage}</div>}

@@ -189,6 +189,9 @@ a { color: inherit; text-decoration: none; }
 .view-layer { display: flex; align-items: center; gap: 6px; padding: 9px 13px; border-radius: 9px; background: transparent; color: #6f8176; font: 600 12px system-ui, sans-serif; white-space: nowrap; }
 .view-layer::before { content: ''; align-self: stretch; width: 1px; margin: -2px 6px -2px -10px; background: #e3e9e0; }
 .view-layer[aria-pressed=true] { background: #286853; color: #fffbe9; }
+/* Icon only here; the label shows in the phone's view menu. */
+.view-layer { padding: 9px 11px; }
+.view-layer-label { display: none; }
 @media (max-width: 699px) {
   .view-toggle { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: #fffff8f2; color: #2f5448; box-shadow: var(--shadow); }
   .view-panel { display: none; flex-direction: column; position: absolute; top: 50px; right: 0; padding: 10px; border-radius: 16px; background: #fffff8f7; box-shadow: 0 8px 30px rgba(8,34,32,.2); min-width: 220px; align-items: stretch; }
@@ -196,6 +199,7 @@ a { color: inherit; text-decoration: none; }
   .view-panel { gap: 8px; border: 0; }
   .view-panel .view-switch { padding: 4px; box-shadow: none; border: 0; background: #eef3ec; }
   .view-layer::before { display: none; }
+  .view-layer-label { display: inline; }
   .view-panel .view-switch button { flex: 1; font-size: 12px; padding: 10px 8px; }
   .view-layer { display: flex; gap: 8px; align-items: center; padding: 11px 12px; border: 0; box-shadow: none; border-radius: 10px; background: #eef3ec; color: #2f5448; font: 600 12px system-ui, sans-serif; }
   .view-layer[aria-pressed=true] { background: #286853; color: #fffbe9; }
