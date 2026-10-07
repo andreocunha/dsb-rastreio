@@ -1,14 +1,29 @@
 # DSB · Solar Boat Race
 
 Interface Next.js com mapa simplificado em Canvas 2D e cenário 3D opcional para acompanhar posições reais do DSB Tracker.
-O mapa é sempre público, sem login. A administração em `/admin` pede apenas a senha
-da organização, definida em `ADMIN_PASSWORD` no `.env` (mínimo 8 caracteres; trocar a
-senha encerra as sessões abertas, que duram 12 h; 10 tentativas por minuto).
+O mapa é sempre público, sem login. A organização entra pelo **painel da organização**:
+
+- **No app DSB (iframe):** o app adiciona `?admin=1` para quem está em `admin_emails` (a
+  mesma lista do painel `/admin` do app) e aparece o botão **Organização** no mapa. O
+  painel entra sozinho com a conta do app: pede a sessão ao app (`postMessage`), o
+  servidor confere o token no Supabase e o e-mail em `admin_emails`. Dentro do iframe a
+  sessão vai num cabeçalho `Authorization` (navegadores não enviam o cookie ali).
+- **Direto no navegador (`/admin` ou `/?admin=1`):** senha da organização, em
+  `ADMIN_PASSWORD` no `.env` (mínimo 8 caracteres; trocar a senha encerra as sessões
+  abertas, que duram 12 h; 10 tentativas por minuto).
+
+O painel tem as abas **Prova** (escolher e publicar a prova, ajustar o desenho no mapa),
+**Barcos** (lista com logos; cor, casco e motores no mapa; cadastrar barco),
+**Aparelhos** (vincular ou trocar o celular de um barco, desativar, apagar) e **SOS**.
+O histórico é do barco: trocar o celular mantém o mesmo barco no mapa e no histórico, e
+apagar um aparelho mantém trajetos, posições e SOS da equipe (migração
+`../dsb-app/supabase/migrations/20261007215611_rastreio_historico_do_barco.sql`).
 SSE pelo `dsb-server` entrega uma leitura compartilhada da frota; não há assinatura
 Supabase Realtime por visitante. O modo normal usa telemetria real, sem barcos mockados.
 
-Locais disponíveis: DSB / Imboassica e teste em Vitória (-20.265221, -40.260797).
-Abra `/?venue=vitoria-test`. A posição do tracker não é deslocada para o local escolhido.
+O local é sempre DSB / Imboassica e a iluminação do 3D segue o sol real no local
+(horário de Brasília). Para testes, há um local em Vitória (-20.265221, -40.260797):
+`/?venue=vitoria-test`. A posição do tracker não é deslocada para o local escolhido.
 
 ## Run
 
@@ -29,7 +44,7 @@ The build command generates `public/offline-manifest.js` from the exact Next bui
 ## Dentro do app DSB (iframe) e logos
 
 Quando aberto dentro de outro site (iframe) ou com `?embed=1`, o mapa mostra só o
-essencial para o público: sem seletor de local, link da organização ou editor.
+essencial para o público (o botão **Organização** só com `?admin=1`, veja acima).
 No celular, as embarcações ficam numa faixa fina no rodapé (logo, nome e
 velocidade; tocar acompanha o barco) e 3D/horário/camada ficam num único botão.
 As logos vêm de `teams.logo` (nome do arquivo), enviado pelo stream ao vivo, e são
@@ -40,7 +55,7 @@ carregadas de `https://dsb.app.br/logos/<arquivo>`; outro endereço pode ser def
 
 The default chart bundles simplified OpenStreetMap geometry: no external tiles, map library, web font or 3D engine is loaded. The satellite button loads imagery on demand. Drag/pinch or use zoom buttons; select a boat on the map or in the accessible fleet list; the initial view fits the selected course. The sliders button below the layer selector opens the course editor. Controls sit near the bottom edge, above the fleet panel on mobile.
 
-O editor de percursos aparece só para quem está logado em `/admin`, nos modos
+O editor de percursos abre pelo painel da organização (**Prova → Ajustar o desenho no mapa**), nos modos
 simplificado e 3D, sem mudar a vista nem mover o mapa. Cada ajuste é salvo no servidor
 (tabela `tracker_courses`, com 0,6 s de espera após o último gesto). **Mostrar esta
 prova ao público** define qual prova todos veem. O `dsb-server` lê essa tabela a cada 2 s
@@ -85,7 +100,7 @@ um leve brilho próprio, legível em qualquer horário. A demonstração inclui 
 de resgate (brancos, com prancha) e lancha de alumínio patrulhando devagar perto da
 raia, fora do percurso. As cores das equipes são tons vivos escolhidos para
 contrastar com a água.
-Ao vivo, cor, casco e motores são definidos em **/admin → Aparência no mapa**
+Ao vivo, cor, casco e motores são definidos no painel da organização, aba **Barcos**
 (colunas `teams.boat_hull` e `teams.boat_motors`; migração em
 `../dsb-app/supabase/migrations/20260927200000_boat_appearance.sql`). Sem a
 migração, todos aparecem como catamarã de 1 motor.
@@ -113,7 +128,7 @@ oculta suspende a animação. Edição do circuito usa a visualização simplifi
 
 ### Demonstração
 
-O botão **Simular barcos** abre `/?venue=imboassica&view=3d&demo=1`: seis
+Só para testes, sem botão no mapa: `/?venue=imboassica&view=3d&demo=1`. Dez
 competidores no percurso padrão e três embarcações de apoio. O modo fica
 identificado como **Demonstração · Dados fictícios**. Há pausa, velocidades
 1×/2×/4× e retorno ao vivo. A demonstração não abre SSE, não envia dados e não lê

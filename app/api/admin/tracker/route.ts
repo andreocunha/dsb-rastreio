@@ -18,6 +18,16 @@ export async function POST(request:Request) {
     if(input.action==='bind') {
       const code=String(input.code??'').replace(/\s/g,'').toUpperCase(); const teamId=String(input.teamId??'');
       if(!/^[A-F0-9]{10}$/.test(code) || !teamId || teamId.length>100) throw new ApiError(400,'Confira o código de 10 caracteres e o barco.');
+      // Positions belong to the boat, not the phone: linking a new phone to a boat that already has
+      // one swaps them (the boat keeps its name, colour and history on the map). The old phone is
+      // retired and its open trip closed.
+      const previous=await db.from('tracker_devices').select('id').eq('team_id',teamId).eq('enabled',true).neq('display_code',code);
+      if(previous.error) throw new ApiError(503,'Não foi possível conferir o aparelho atual do barco.');
+      for(const old of previous.data) {
+        const ended=await db.from('tracker_sessions').update({ended_at:new Date().toISOString()}).eq('device_id',old.id).is('ended_at',null);
+        const disabled=await db.from('tracker_devices').update({enabled:false}).eq('id',old.id);
+        if(ended.error || disabled.error) throw new ApiError(503,'Não foi possível retirar o aparelho anterior.');
+      }
       const result=await db.rpc('tracker_bind_device',{p_code:code,p_team:teamId});
       if(result.error) {
         if(result.error.code==='23505') throw new ApiError(409,'Este barco já tem um tracker. Desative o anterior primeiro.');
@@ -29,6 +39,21 @@ export async function POST(request:Request) {
       if(typeof input.id!=='string') throw new ApiError(400,'Aparelho inválido.');
       const result=await db.from('tracker_devices').update({enabled:false}).eq('id',input.id).select('id').single();
       if(result.error) throw new ApiError(400,'Não foi possível desativar.');
+    } else if(input.action==='delete') {
+      if(typeof input.id!=='string' || input.id.length>100) throw new ApiError(400,'Aparelho inválido.');
+      const open=await db.from('tracker_sessions').select('id',{count:'exact',head:true}).eq('device_id',input.id).is('ended_at',null);
+      if(open.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
+      if(open.count) throw new ApiError(409,'Este aparelho está numa viagem em andamento. Encerre a viagem no app antes de apagar.');
+      // The boat keeps its trips, positions and SOS history: they are only unlinked from this phone.
+      for(const table of ['tracker_sos','tracker_points','tracker_sessions']) {
+        const unlinked=await db.from(table).update({device_id:null}).eq('device_id',input.id);
+        if(unlinked.error) throw new ApiError(503,unlinked.error.code==='23502'?'Este aparelho tem histórico. Aplique a migração que preserva o histórico dos barcos para apagá-lo.':'Não foi possível apagar o aparelho.');
+      }
+      // Only its last live position (a per-phone cache) goes with it.
+      const latest=await db.from('tracker_latest').delete().eq('device_id',input.id);
+      if(latest.error) throw new ApiError(503,'Não foi possível apagar o aparelho.');
+      const removed=await db.from('tracker_devices').delete().eq('id',input.id).select('id').single();
+      if(removed.error) throw new ApiError(400,'Não foi possível apagar o aparelho.');
     } else if(input.action==='createBoat') {
       const name=String(input.name??'').trim(); const initials=String(input.initials??'').trim().toUpperCase();
       if(name.length<2 || name.length>60 || !/^[A-Z0-9À-Ÿ]{1,3}$/.test(initials)) throw new ApiError(400,'Informe nome e sigla de até 3 caracteres.');

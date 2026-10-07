@@ -20,7 +20,8 @@ export function feedStatusFor(
   if (phase === 'connecting') return 'Conectando ao rastreamento…';
   if (phase === 'disconnected') return 'Conexão indisponível · Reconectando';
   if (!healthy) return 'Servidor sem atualização · Últimas posições';
-  if (!boats.length) return 'Aguardando barcos iniciarem a viagem';
+  // Nothing to say until the first boat sets off: no status pill over the map.
+  if (!boats.length) return '';
   const fresh = boats.filter(boat => isRecentPosition(boat.capturedAt, now)).length;
   if (fresh === boats.length) return 'Ao vivo';
   if (fresh) return `Ao vivo · ${boats.length - fresh} sem atualização`;

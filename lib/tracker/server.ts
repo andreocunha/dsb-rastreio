@@ -1,7 +1,7 @@
 import 'server-only';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 export function database() {
@@ -17,8 +17,24 @@ function adminPassword() {
   if(!password || password.length<8) throw new ApiError(503,'Defina ADMIN_PASSWORD (8+ caracteres) no .env.');
   return password;
 }
-// Sessions are signed with the password itself: changing it logs everyone out.
+// Sessions are signed with ADMIN_SESSION_SECRET (or the password): changing it logs everyone out.
 const sign=(expires:number)=>createHmac('sha256',process.env.ADMIN_SESSION_SECRET || adminPassword()).update(`dsb-admin:${expires}`).digest('base64url');
+/**
+ * Inside the DSB app the organizer is already signed in: the app hands over the user's Supabase
+ * access token, checked with Supabase itself (same project). Organizers are the app's own list,
+ * public.admin_emails (the one behind the app's /admin panel): one list for both.
+ */
+export async function checkAccessToken(token:unknown) {
+  if(typeof token!=='string' || token.length<20 || token.length>4096) throw new ApiError(400,'Sessão do app inválida.');
+  const db=database();
+  const {data,error}=await db.auth.getUser(token);
+  const email=data.user?.email?.toLowerCase();
+  if(error || !email) throw new ApiError(401,'Sessão do app expirada. Abra o app novamente.');
+  const admin=await db.from('admin_emails').select('email').eq('email',email).maybeSingle();
+  if(admin.error) throw new ApiError(503,'Não foi possível conferir a organização.');
+  if(!admin.data) throw new ApiError(403,'Esta conta não faz parte da organização.');
+  return email;
+}
 const attempts:number[]=[];
 export function checkPassword(candidate:unknown) {
   const now=Date.now();
@@ -29,13 +45,20 @@ export function checkPassword(candidate:unknown) {
   if(typeof candidate!=='string' || candidate.length>512) throw new ApiError(400,'Informe a senha.');
   if(!timingSafeEqual(digest(candidate),digest(adminPassword()))) throw new ApiError(401,'Senha incorreta.');
 }
+/**
+ * A signed session: as a cookie for the site opened directly, and returned so that a page inside
+ * an iframe (the DSB app), where browsers don't send this cookie, can send it as a Bearer header.
+ */
 export async function startSession() {
   const expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
-  (await cookies()).set(SESSION_COOKIE,`${expires}.${sign(expires)}`,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/',maxAge:SESSION_SECONDS});
+  const token=`${expires}.${sign(expires)}`;
+  (await cookies()).set(SESSION_COOKIE,token,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/',maxAge:SESSION_SECONDS});
+  return token;
 }
 export async function endSession() { (await cookies()).delete(SESSION_COOKIE); }
 export async function operator() {
-  const value=(await cookies()).get(SESSION_COOKIE)?.value ?? '';
+  const bearer=(await headers()).get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
+  const value=bearer ?? (await cookies()).get(SESSION_COOKIE)?.value ?? '';
   const [raw,signature='']=value.split('.');const expires=Number(raw);
   if(!value || !Number.isInteger(expires)) throw new ApiError(401,'Entre para continuar.');
   const expected=sign(expires);

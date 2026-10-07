@@ -3,12 +3,13 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { initEngine, type EngineAPI, type LiveBoat } from '@/lib/map/engine';
 import { ROUTE_COLORS, type Boat, type EditTool } from '@/lib/map/types';
 import { Icon } from './Icon';
-import { VENUES, venueById } from '@/lib/map/venues';
+import { venueById } from '@/lib/map/venues';
 import { feedStatusFor, isRecentPosition } from '@/lib/tracker/freshness';
-import type { LightMode } from '@/lib/map/three/lighting';
 import { SosNotices, type PublicSos } from '@/lib/tracker/sos-notices';
 import { SosNotice } from './SosNotice';
 import { Fleet, TeamAvatar } from './Fleet';
+import { AdminPanel } from '@/components/admin/AdminPanel';
+import { adminFetch, hasAdminSession } from '@/lib/tracker/admin-session';
 import { COURSE_PRESETS, CUSTOM_COURSE_ID } from '@/lib/map/courses';
 import { areasRowId, courseRowId, parseAreas, parseGeometry, parseLiveCourse } from '@/lib/map/course-data';
 
@@ -38,7 +39,6 @@ export default function MapCanvas() {
   const [view3D,setView3D]=useState(false);
   const [loading3D,setLoading3D]=useState(false);
   const [viewMessage,setViewMessage]=useState('');
-  const [lightMode,setLightMode]=useState<LightMode>('live');
   const [photographic,setPhotographic]=useState(true);
   const [demo,setDemo]=useState(false);
   const [demoPaused,setDemoPaused]=useState(false);
@@ -59,6 +59,9 @@ export default function MapCanvas() {
   const [fleet, setFleet] = useState<Boat[]>([]);
   const [style, setStyle] = useState<'chart' | 'satellite'>('chart');
   const [isAdmin, setIsAdmin] = useState(false);
+  // The DSB app adds ?admin=1 for organizers: an "Organização" button opens the panel (signed in with their account).
+  const [adminInvited, setAdminInvited] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [live, setLive] = useState<{venue: string; course: string} | null>(null);
   const [saveState, setSaveState] = useState<{state: 'idle' | 'saving' | 'saved' | 'error'; message?: string}>({state: 'idle'});
   const storedRef = useRef(new Map<string, unknown>());
@@ -82,7 +85,8 @@ export default function MapCanvas() {
   useEffect(() => {
     if (embed || demo) return;
     let disposed = false;
-    fetch('/api/admin/session?probe=1', {cache: 'no-store'}).then(r => r.json()).then(r => { if (!disposed) setIsAdmin(r.admin === true); }).catch(() => {});
+    void hasAdminSession().then(admin => { if (!disposed) setIsAdmin(admin); });
+    setAdminInvited(new URLSearchParams(location.search).get('admin') === '1');
     return () => { disposed = true; };
   }, [embed, demo]);
 
@@ -160,9 +164,7 @@ export default function MapCanvas() {
         saveTimer.current = setTimeout(async () => {
           const body = pendingEdit.current as {venue: string; course: string; geometry: unknown; areas: unknown};
           try {
-            const response = await fetch('/api/admin/course', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'save', ...body})});
-            const result = await response.json();
-            if (!response.ok) throw Error(result.error);
+            await adminFetch('/api/admin/course', {method: 'POST', json: {action: 'save', ...body}});
             storedRef.current.set(courseRowId(body.venue, body.course), body.geometry);
             storedRef.current.set(areasRowId(body.venue), body.areas);
             setSaveState({state: 'saved'});
@@ -232,7 +234,7 @@ export default function MapCanvas() {
     function visibility(){clearTimeout(reconnect);if(document.hidden){source?.close();source=null;}else connect();}
     document.addEventListener('visibilitychange',visibility);window.addEventListener('online',connect);
     connect();
-    if(isDemo){setFeedStatus('Demonstração · Dados fictícios');engine.setLighting('noon');setLightMode('noon');}
+    if(isDemo){setFeedStatus('Demonstração · Dados fictícios');engine.setLighting('noon');}
     let preference='';try{preference=localStorage.getItem('dsb:map:view')??'';}catch{}
     const requestedView=new URLSearchParams(location.search).get('view');
     // 3D is the default; the simplified view stays one tap away and is remembered.
@@ -253,7 +255,6 @@ export default function MapCanvas() {
     try{localStorage.setItem('dsb:map:view',ok?'3d':'simple');}catch{}
     const url=new URL(location.href);url.searchParams.set('view',ok?'3d':'simple');history.replaceState(null,'',url);
   }
-  function changeLight(mode:LightMode){setLightMode(mode);engineRef.current?.setLighting(mode);}
   function openDemo(enabled:boolean){
     const url=new URL(location.href);url.searchParams.delete('boat');
     if(enabled){url.searchParams.set('demo','1');url.searchParams.set('venue','imboassica');url.searchParams.set('view','3d');}
@@ -266,22 +267,22 @@ export default function MapCanvas() {
     setActiveTool(next); engineRef.current?.setEditTool(next);
     if (next && mobile) setCompactEditor(true);
   }
-  async function toggleEditor() {
-    if (editing) {
-      clearTimeout(saveTimer.current);
-      setEditing(false); setActiveTool(null); engineRef.current?.endEdit();
-      return;
-    }
+  function closeEditor() {
+    clearTimeout(saveTimer.current);
+    setEditing(false); setActiveTool(null); engineRef.current?.endEdit();
+  }
+  /** Starts an edit session (the organizer's working copy, saved on the server as it changes). */
+  async function openEditor() {
+    if (editing) return;
     // Keep the current view (3D or not) and camera: editing works in both.
     setEditing(true); setActiveTool(null); setCompactEditor(false); setSaveState({state: 'idle'});
     engineRef.current?.follow(null); engineRef.current?.beginEdit();
     try {
-      const response = await fetch('/api/admin/course', {cache: 'no-store'});
-      const result = await response.json();
-      if (!response.ok) throw Error(result.error);
-      storedRef.current = new Map((result.rows as {id: string; data: unknown}[]).map(r => [r.id, r.data]));
+      const result = await adminFetch<{rows: {id: string; data: unknown}[]}>('/api/admin/course');
+      storedRef.current = new Map(result.rows.map(r => [r.id, r.data]));
     } catch (error) { setSaveState({state: 'error', message: (error as Error).message}); }
   }
+  async function toggleEditor() { if (editing) closeEditor(); else await openEditor(); }
   function selectCourse(id: string) {
     const stored = storedRef.current;
     engineRef.current?.loadCourse(venueId, id, parseGeometry(stored.get(courseRowId(venueId, id))), parseAreas(stored.get(areasRowId(venueId))));
@@ -290,23 +291,17 @@ export default function MapCanvas() {
   async function publishCourse() {
     setSaveState({state: 'saving'});
     try {
-      const response = await fetch('/api/admin/course', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'activate', venue: venueId, course: courseId})});
-      const result = await response.json();
-      if (!response.ok) throw Error(result.error);
+      await adminFetch('/api/admin/course', {method: 'POST', json: {action: 'activate', venue: venueId, course: courseId}});
       setLive({venue: venueId, course: courseId}); setSaveState({state: 'saved'});
     } catch (error) { setSaveState({state: 'error', message: (error as Error).message}); }
-  }
-  function selectVenue(id:string) {
-    if(demo)return;
-    const venue=venueById(id); engineRef.current?.selectVenue(venue.id);
-    setVenueId(venue.id);setActiveTool(null);setSelected(null);
-    const url=new URL(location.href);url.searchParams.set('venue',venue.id);history.replaceState(null,'',url);
   }
   // Stable callbacks: the fleet strip's chips stay memoised across the 2 Hz fleet refresh.
   const selectedRef = useRef(selected);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   const selectBoat = useCallback((id: string) => engineRef.current?.follow(selectedRef.current === id ? null : id), []);
   const setUiBusy = useCallback((busy: boolean) => engineRef.current?.setUiBusy(busy), []);
+  // Stable: the panel's sign-in effect must not re-run on every map render.
+  const adminSignedIn = useCallback(() => setIsAdmin(true), []);
   function changeStyle() {
     if(view3D){setPhotographic(!photographic);engineRef.current?.setPhotographic(!photographic);return;}
     const next = style === 'chart' ? 'satellite' : 'chart';
@@ -319,17 +314,16 @@ export default function MapCanvas() {
 
   return (
     <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''}`}>
-      <div className="tracker-feed" role="status">{feedStatus}{!demo&&!embed&&<a href="/admin">Organização ↗</a>}</div>
-      {!embed&&<label className="venue-picker">Local<select disabled={demo} aria-label="Local do mapa" value={venueId} onChange={e=>selectVenue(e.target.value)}>{VENUES.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</select><button type="button" onClick={fitVisibleCourse} aria-label="Enquadrar local">⌖</button></label>}
-      <div className="demo-controls" aria-label="Demonstração dos barcos">
-        {demo?<><button onClick={pauseDemo}>{demoPaused?'▶ Continuar':'Ⅱ Pausar'}</button><select aria-label="Velocidade da demonstração" value={demoSpeed} onChange={e=>{const speed=Number(e.target.value);setDemoSpeed(speed);engineRef.current?.setDemoSpeed(speed);}}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select><button onClick={()=>openDemo(false)}>Voltar ao vivo</button></>:<button onClick={()=>openDemo(true)}>▶ Simular barcos</button>}
-      </div>
+      {feedStatus && <div className="tracker-feed" role="status">{feedStatus}</div>}
+      {/* The simulation stays for testing: open with ?demo=1. */}
+      {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
+        <><button onClick={pauseDemo}>{demoPaused?'▶ Continuar':'Ⅱ Pausar'}</button><select aria-label="Velocidade da demonstração" value={demoSpeed} onChange={e=>{const speed=Number(e.target.value);setDemoSpeed(speed);engineRef.current?.setDemoSpeed(speed);}}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select><button onClick={()=>openDemo(false)}>Voltar ao vivo</button></>
+      </div>}
       {sosQueue[0] && <SosNotice key={sosQueue[0][0]} notice={sosQueue[0]} onClose={dismissSos} canFollow={fleet.some(b=>b.id===sosQueue[0][1])} onFollow={()=>{engineRef.current?.follow(sosQueue[0][1]);dismissSos();}}/>}
       <div className={`view-controls ${viewMenu?'view-controls--open':''}`} aria-label="Visualização do mapa">
         <button className="view-toggle" onClick={()=>setViewMenu(!viewMenu)} aria-expanded={viewMenu} aria-label="Ajustes de visualização"><Icon name={viewMenu?'close':'sun'} size={18}/></button>
         <div className="view-panel">
           <div className="view-switch"><button onClick={()=>void changeView(false)} aria-pressed={!view3D} disabled={loading3D}>Simplificado</button><button onClick={()=>void changeView(true)} aria-pressed={view3D} disabled={loading3D}>{loading3D?'Preparando…':'3D'}</button></div>
-          {view3D && <label className="light-picker"><Icon name="sun" size={15}/><select aria-label="Iluminação do cenário" value={lightMode} onChange={e=>changeLight(e.target.value as LightMode)}><option value="live">Horário real</option><option value="morning">Manhã</option><option value="noon">Meio-dia</option><option value="sunset">Pôr do sol</option><option value="night">Noite</option></select></label>}
           <button className="view-layer" onClick={changeStyle} aria-pressed={view3D?photographic:style==='satellite'}><Icon name="layers" size={15}/>{(view3D?photographic:style==='satellite')?'Satélite':'Mapa ilustrado'}</button>
         </div>
       </div>
@@ -345,6 +339,7 @@ export default function MapCanvas() {
         <button ref={compassRef} className="map-tool map-compass" hidden onClick={() => engineRef.current?.resetView()} aria-label="Voltar ao norte e à vista de cima" title="Voltar ao norte (Ctrl/Shift + arrastar gira e inclina)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3l3.2 9H8.8z" fill="#d64541"/><path d="M12 21l-3.2-9h6.4z" fill="#9aa7a0"/><circle cx="12" cy="12" r="1.3" fill="#fff"/></svg></button>
         <div className="zoom-controls"><button onClick={() => engineRef.current?.zoom(0.5)} aria-label="Aproximar"><Icon name="plus"/></button><button onClick={() => engineRef.current?.zoom(-0.5)} aria-label="Afastar"><Icon name="minus"/></button></div>
         <button className="map-tool" onClick={changeStyle} aria-label={(view3D?photographic:style==='satellite')?'Ver mapa ilustrado':'Ver satélite'} title={(view3D?photographic:style==='satellite')?'Ver mapa ilustrado':'Ver satélite'} aria-pressed={view3D?photographic:style==='satellite'}><Icon name="layers"/></button>
+        {(adminInvited || isAdmin) && !demo && <button className="map-admin" aria-expanded={adminOpen} onClick={() => setAdminOpen(!adminOpen)}><Icon name="settings" size={15}/>Organização</button>}
         {isAdmin&&!demo&&!embed&&<button className="map-tool map-edit" aria-label="Editar circuito" title="Editar circuito" aria-expanded={editing} aria-controls="course-editor" onClick={toggleEditor}><Icon name="settings"/></button>}
       </div>
 
@@ -354,7 +349,7 @@ export default function MapCanvas() {
         <><TeamAvatar boat={followed}/><div className="follow-identity"><span className="eyebrow">ACOMPANHANDO</span><strong>{followed.label}</strong></div><div className="follow-stat"><strong>{(demo || (followed.speedKnown && isRecentPosition(followed.capturedAt))) ? followed.speed.toFixed(1) : '—'}<small> nós</small></strong><span>velocidade</span></div><div className="follow-stat follow-heading"><strong>{followed.heading.toFixed(0)}°</strong><span>direção</span></div><button className="icon-button" aria-label="Parar de acompanhar" onClick={() => engineRef.current?.follow(null)}><Icon name="close" size={16}/></button></>
       </section>}
 
-      {editing && <section ref={editorRef} id="course-editor" className={`editor-panel ${compactEditor && mobile ? 'editor-panel--compact' : ''}`} aria-label="Editor do circuito"><div className="editor-heading"><div><span className="eyebrow">ORGANIZAÇÃO</span><h2>Percursos</h2></div><button className="icon-button" onClick={toggleEditor} aria-label="Fechar editor"><Icon name="close" size={18}/></button></div>
+      {editing && !adminOpen && <section ref={editorRef} id="course-editor" className={`editor-panel ${compactEditor && mobile ? 'editor-panel--compact' : ''}`} aria-label="Editor do circuito"><div className="editor-heading"><div><span className="eyebrow">ORGANIZAÇÃO</span><h2>Percursos</h2></div><button className="icon-button" onClick={toggleEditor} aria-label="Fechar editor"><Icon name="close" size={18}/></button></div>
         {venueId==='imboassica' && <label className="course-picker">Prova<select value={courseId} onChange={event => selectCourse(event.target.value)}>{COURSE_PRESETS.map(p => <option value={p.id} key={p.id}>{p.name}{live?.venue===venueId&&live.course===p.id?' · no ar':''}</option>)}<option value={CUSTOM_COURSE_ID}>Circuito livre{live?.venue===venueId&&live.course===CUSTOM_COURSE_ID?' · no ar':''}</option></select></label>}
         <div className="publish-row">{isLive ? <span className="live-badge">● No ar para o público</span> : <button className="publish-button" onClick={()=>void publishCourse()}>Mostrar esta prova ao público</button>}</div>
         {currentCourse && <div className="course-meta"><strong>{currentCourse.schedule}</strong><span>Traçado aproximado das referências</span></div>}
@@ -367,6 +362,13 @@ export default function MapCanvas() {
         <div className="course-actions"><button disabled={!canUndo} onClick={() => engineRef.current?.undoCourse()}>Desfazer ajuste</button>{currentCourse && <button onClick={() => engineRef.current?.resetCourse()}>Restaurar modelo</button>}<button onClick={fitVisibleCourse}>Enquadrar prova</button></div>
         <div className={`saved-note ${saveState.state==='error' ? 'saved-note--error' : ''}`} role="status"><Icon name={saveState.state==='error' ? 'offline' : 'check'} size={13}/>{saveState.state==='saving' ? 'Salvando…' : saveState.state==='error' ? (saveState.message || 'Não foi possível salvar.') : isLive ? 'Salvo no servidor · o público vê em segundos' : 'Salvo no servidor · ainda não publicado'}</div>
       </section>}
+      {adminOpen && <AdminPanel mode="sheet" onClose={() => setAdminOpen(false)} onSignedIn={adminSignedIn} course={{
+        courses: [...COURSE_PRESETS.map(p => ({id: p.id, name: p.name})), {id: CUSTOM_COURSE_ID, name: 'Circuito livre'}].map(c => ({...c, live: live?.venue === venueId && live.course === c.id})),
+        current: courseId, isLive,
+        select: id => { void openEditor().then(() => selectCourse(id)); },
+        publish: () => { void publishCourse(); },
+        editDrawing: () => { setAdminOpen(false); void openEditor(); },
+      }}/>}
       {!online && style === 'satellite' && <div className="offline-notice" role="status">Satélite limitado às imagens já visitadas. <button onClick={changeStyle}>Usar mapa ilustrado</button></div>}
     </main>
   );
