@@ -19,7 +19,16 @@
 @keyframes adm-up { from { transform: translateY(24px); opacity: 0; } }
 @keyframes adm-in { from { transform: translateX(16px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .dsb-admin--sheet { animation: none; } }
-.dsb-admin--page { position: relative; min-height: 100dvh; max-width: 720px; margin-inline: auto; }
+/* /admin: the site locks page scrolling (the map needs it), so the page scrolls on its own. */
+.dsb-admin--page { position: fixed; inset: 0; }
+.dsb-admin--page .adm-head, .dsb-admin--page .adm-body > * { width: 100%; max-width: 920px; margin-inline: auto; }
+@media (min-width: 700px) {
+  .dsb-admin--page .adm-head { width: calc(100% - 48px); padding: 32px 0 18px; }
+  .dsb-admin--page .adm-head h1 { font-size: 28px; }
+  .dsb-admin--page .adm-body { padding: 0 24px 40px; }
+  .dsb-admin--page .adm-tabs { max-width: 520px; margin-left: max(0px, calc((100% - 920px) / 2)); }
+  .adm-two--wide { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
 
 .adm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 18px 12px; }
 .adm-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -.4px; }
@@ -109,3 +118,14 @@ button.adm-row:hover { background: var(--surface-hover); }
 .adm-dialog h2 { font-size: 16px; font-weight: 700; }
 .adm-dialog p { color: var(--text-secondary); }
 .adm-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+/* Several phones at once. */
+.adm-check { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-left: -4px; cursor: pointer; }
+.adm-check input { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
+.adm-chosen { background: var(--brand-soft); }
+.adm-link { margin-left: auto; color: var(--brand) !important; font-size: 12px !important; font-weight: 600; }
+.adm-link:hover { text-decoration: underline; }
+.adm-bulk { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 10px 10px 10px 14px; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface); box-shadow: 0 -6px 24px #2a1d401f; }
+.adm-bulk > span { flex: 1; color: var(--text-secondary); font-size: 13px; }
+.adm-bulk strong { color: var(--text); }
+@media (max-width: 699px) { .adm-two--wide { grid-template-columns: minmax(0, 1fr); } }

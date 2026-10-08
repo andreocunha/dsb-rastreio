@@ -81,7 +81,14 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
 
   async function mutate(input: Record<string, unknown>, done = 'Alteração salva.') {
     setBusy(true); setError(''); setNotice('');
-    try { await adminFetch('/api/admin/tracker', {method: 'POST', json: input}); await refresh(); setNotice(done); setConfirm(null); setEditingTeam(null); }
+    try {
+      const result = await adminFetch<{deleted?: number; kept?: string[]}>('/api/admin/tracker', {method: 'POST', json: input});
+      await refresh(); setConfirm(null); setEditingTeam(null);
+      if (result.deleted !== undefined) {
+        const kept = result.kept?.length ?? 0;
+        setNotice(`${result.deleted} ${result.deleted === 1 ? 'aparelho apagado' : 'aparelhos apagados'}.${kept ? ` ${kept} em viagem ${kept === 1 ? 'ficou' : 'ficaram'} (encerre a viagem antes).` : ''}`);
+      } else setNotice(done);
+    }
     catch (e) { setError((e as Error).message); setConfirm(null); }
     finally { setBusy(false); }
   }
@@ -193,12 +200,25 @@ function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; ed
 
 function DevicesTab({teams, devices, team, busy, confirm}: {teams: Team[]; devices: Device[]; team: (id: string | null) => Team | undefined; busy: boolean; confirm: (c: Confirm) => void}) {
   const [teamId, setTeamId] = useState('');
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
   const inUse = devices.filter(d => d.enabled && d.team_id).sort((a, b) => (team(a.team_id)?.name ?? '').localeCompare(team(b.team_id)?.name ?? '', 'pt-BR'));
   const others = devices.filter(d => !(d.enabled && d.team_id));
   const current = devices.find(d => d.enabled && d.team_id === teamId);
+  // Only phones that still exist count (the list refreshes every few seconds).
+  const selected = devices.filter(d => chosen.has(d.id)).map(d => d.id);
+  const toggle = (id: string) => setChosen(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const toggleAll = (list: Device[]) => setChosen(prev => {
+    const next = new Set(prev), all = list.every(d => next.has(d.id));
+    for (const d of list) if (all) next.delete(d.id); else next.add(d.id);
+    return next;
+  });
+  const heading = (label: string, list: Device[]) => <h3 className="adm-section">{label} <small>{list.length}</small>
+    {list.length > 1 && <button className="adm-link" onClick={() => toggleAll(list)}>{list.every(d => chosen.has(d.id)) ? 'Desmarcar todos' : 'Selecionar todos'}</button>}
+  </h3>;
   const row = (device: Device) => {
     const owner = team(device.team_id), seen = device.last_seen_at ? positionAge(device.last_seen_at) : 'Nunca conectou';
-    return <li key={device.id} className="adm-row adm-device">
+    return <li key={device.id} className={`adm-row adm-device ${chosen.has(device.id) ? 'adm-chosen' : ''}`}>
+      <label className="adm-check" aria-label={`Selecionar aparelho ${device.display_code}`}><input type="checkbox" checked={chosen.has(device.id)} onChange={() => toggle(device.id)} /></label>
       <TeamBadge team={owner} size={36} />
       <span className="adm-row-main"><strong>{owner?.name ?? 'Sem barco'}</strong><small><code>{device.display_code}</code> · {seen}</small></span>
       <span className={`adm-tag ${device.enabled ? 'on' : ''}`}>{device.enabled ? 'Em uso' : 'Desativado'}</span>
@@ -214,14 +234,21 @@ function DevicesTab({teams, devices, team, busy, confirm}: {teams: Team[]; devic
       confirm({title: current ? 'Trocar o aparelho?' : 'Vincular aparelho?', message: current ? `${owner?.name} passa a usar o aparelho ${form.get('code')}. O aparelho ${current.display_code} é desativado; o barco continua o mesmo no mapa e no histórico.` : `O aparelho ${form.get('code')} passa a enviar as posições de ${owner?.name}.`, action: current ? 'Trocar' : 'Vincular', input: {action: 'bind', code: form.get('code'), teamId: form.get('teamId')}});
     }}>
       <h3>Vincular aparelho a um barco</h3>
-      <label className="adm-field"><span>Barco</span><select name="teamId" required value={teamId} onChange={e => setTeamId(e.target.value)}><option value="" disabled>Selecione o barco</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-      <label className="adm-field"><span>Código mostrado no celular</span><input name="code" placeholder="838AA42633" maxLength={11} autoComplete="off" required className="adm-code" /></label>
+      <div className="adm-two adm-two--wide">
+        <label className="adm-field"><span>Barco</span><select name="teamId" required value={teamId} onChange={e => setTeamId(e.target.value)}><option value="" disabled>Selecione o barco</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+        <label className="adm-field"><span>Código mostrado no celular</span><input name="code" placeholder="838AA42633" maxLength={11} autoComplete="off" required className="adm-code" /></label>
+      </div>
       {current && <p className="adm-hint">{team(teamId)?.name} usa hoje o aparelho <code>{current.display_code}</code>. Ele será trocado pelo novo.</p>}
       <button className="adm-button primary adm-wide" disabled={busy}>{current ? 'Trocar aparelho' : 'Vincular aparelho'}</button>
     </form>
-    <h3 className="adm-section">Em uso <small>{inUse.length}</small></h3>
+    {heading('Em uso', inUse)}
     {inUse.length ? <ul className="adm-card adm-list">{inUse.map(row)}</ul> : <p className="adm-note">Nenhum aparelho em uso.</p>}
-    {others.length > 0 && <><h3 className="adm-section">Outros aparelhos <small>{others.length}</small></h3><ul className="adm-card adm-list">{others.map(row)}</ul></>}
+    {others.length > 0 && <>{heading('Outros aparelhos', others)}<ul className="adm-card adm-list">{others.map(row)}</ul></>}
+    {selected.length > 0 && <div className="adm-bulk" role="region" aria-label="Aparelhos selecionados">
+      <span><strong>{selected.length}</strong> {selected.length === 1 ? 'selecionado' : 'selecionados'}</span>
+      <button className="adm-button ghost" onClick={() => setChosen(new Set())}>Limpar</button>
+      <button className="adm-button danger-solid" disabled={busy} onClick={() => confirm({title: `Apagar ${selected.length} ${selected.length === 1 ? 'aparelho' : 'aparelhos'}?`, message: 'Eles saem da lista. O histórico dos barcos (trajetos, posições e SOS) continua guardado. Aparelhos numa viagem em andamento não são apagados.', action: 'Apagar', danger: true, input: {action: 'deleteMany', ids: selected}})}>Apagar {selected.length}</button>
+    </div>}
   </div>;
 }
 

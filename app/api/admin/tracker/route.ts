@@ -1,5 +1,22 @@
 import { ApiError, database, operator, sameOrigin, body, json, failure } from '@/lib/tracker/server';
 
+type Database=ReturnType<typeof database>;
+/** Deletes a tracker phone. The boat keeps its trips, positions and SOS history: only the link to this phone goes. */
+async function deleteDevice(db:Database,id:string) {
+  const open=await db.from('tracker_sessions').select('id',{count:'exact',head:true}).eq('device_id',id).is('ended_at',null);
+  if(open.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
+  if(open.count) throw new ApiError(409,'Este aparelho está numa viagem em andamento. Encerre a viagem no app antes de apagar.');
+  for(const table of ['tracker_sos','tracker_points','tracker_sessions']) {
+    const unlinked=await db.from(table).update({device_id:null}).eq('device_id',id);
+    if(unlinked.error) throw new ApiError(503,'Não foi possível apagar o aparelho.');
+  }
+  // Only its last live position (a per-phone cache) goes with it.
+  const latest=await db.from('tracker_latest').delete().eq('device_id',id);
+  if(latest.error) throw new ApiError(503,'Não foi possível apagar o aparelho.');
+  const removed=await db.from('tracker_devices').delete().eq('id',id).select('id').single();
+  if(removed.error) throw new ApiError(400,'Não foi possível apagar o aparelho.');
+}
+
 export async function GET() {
   try {
     await operator(); const db=database();
@@ -14,7 +31,7 @@ export async function GET() {
 }
 export async function POST(request:Request) {
   try {
-    sameOrigin(request); await operator(); const input=await body(request); const db=database();
+    sameOrigin(request); await operator(); const input=await body(request,16384); const db=database();
     if(input.action==='bind') {
       const code=String(input.code??'').replace(/\s/g,'').toUpperCase(); const teamId=String(input.teamId??'');
       if(!/^[A-F0-9]{10}$/.test(code) || !teamId || teamId.length>100) throw new ApiError(400,'Confira o código de 10 caracteres e o barco.');
@@ -41,19 +58,17 @@ export async function POST(request:Request) {
       if(result.error) throw new ApiError(400,'Não foi possível desativar.');
     } else if(input.action==='delete') {
       if(typeof input.id!=='string' || input.id.length>100) throw new ApiError(400,'Aparelho inválido.');
-      const open=await db.from('tracker_sessions').select('id',{count:'exact',head:true}).eq('device_id',input.id).is('ended_at',null);
-      if(open.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
-      if(open.count) throw new ApiError(409,'Este aparelho está numa viagem em andamento. Encerre a viagem no app antes de apagar.');
-      // The boat keeps its trips, positions and SOS history: they are only unlinked from this phone.
-      for(const table of ['tracker_sos','tracker_points','tracker_sessions']) {
-        const unlinked=await db.from(table).update({device_id:null}).eq('device_id',input.id);
-        if(unlinked.error) throw new ApiError(503,unlinked.error.code==='23502'?'Este aparelho tem histórico. Aplique a migração que preserva o histórico dos barcos para apagá-lo.':'Não foi possível apagar o aparelho.');
+      await deleteDevice(db,input.id);
+    } else if(input.action==='deleteMany') {
+      // Several at once (old test phones). Each is checked like a single delete; the ones on a trip stay.
+      const ids=Array.isArray(input.ids)?input.ids.filter((id:unknown)=>typeof id==='string' && id.length<=100):[];
+      if(!ids.length || ids.length>200) throw new ApiError(400,'Selecione de 1 a 200 aparelhos.');
+      let deleted=0; const kept:string[]=[];
+      for(const id of ids) {
+        try { await deleteDevice(db,id); deleted++; }
+        catch(error) { if(error instanceof ApiError && error.status===409) kept.push(id); else throw error; }
       }
-      // Only its last live position (a per-phone cache) goes with it.
-      const latest=await db.from('tracker_latest').delete().eq('device_id',input.id);
-      if(latest.error) throw new ApiError(503,'Não foi possível apagar o aparelho.');
-      const removed=await db.from('tracker_devices').delete().eq('id',input.id).select('id').single();
-      if(removed.error) throw new ApiError(400,'Não foi possível apagar o aparelho.');
+      return json({ok:true,deleted,kept});
     } else if(input.action==='createBoat') {
       const name=String(input.name??'').trim(); const initials=String(input.initials??'').trim().toUpperCase();
       if(name.length<2 || name.length>60 || !/^[A-Z0-9À-Ÿ]{1,3}$/.test(initials)) throw new ApiError(400,'Informe nome e sigla de até 3 caracteres.');
