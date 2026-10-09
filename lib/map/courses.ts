@@ -36,7 +36,6 @@ export const WAITING_AREA: GeoPoint[] = [
   {lat: -22.41527, lon: -41.8179}, {lat: -22.41511, lon: -41.81838},
 ];
 export const LEGACY_MAINTENANCE_AREA = support.map(p => point(p));
-export const LEGACY_SPRINT_POINTS = [[1160, 70], [1086, 428]].map(p => point(p as Pixel));
 const maneuver: Pixel[] = [[1087, 483], [728, 814], [496, 55], [547, 26], [945, 378], [1237, 60], [1286, 66], [1098, 437]];
 const maneuverBuoys: Pixel[] = [[741, 740], [542, 63], [948, 351], [1256, 78]];
 
@@ -68,7 +67,8 @@ export const COURSE_PRESETS: CoursePreset[] = [
   preset('revezamento', '5 · Revezamento de Pilotos', '16 out · 09:00', '13.33.00 (2)', maneuverBuoys, [maneuver]),
   preset('sprint', '6 · Sprint', '17 out · 09:00', '13.32.59',
     [[1059, 39], [1242, 64]],
-    [[[1100, 460], [1290, 120], [1298, 58], [1270, 12], [1205, 3], [1151, 30], [1151, 51.5], [1100, 425]]]),
+    // Straight from the middle of the start gate down to the finish line.
+    [[[1160, 70], [1086, 428]]]),
   preset('slalom', '7 · Slalom', '17 out · 09:30', '13.33.00 (3)',
     [[921, 412], [1006, 474], [987, 509], [970, 545], [955, 581], [937, 618]],
     [[[1086, 432], [991, 464], [998, 490], [973, 501], [980, 527], [955, 536], [963, 563], [939, 574], [946, 600], [926, 608], [926, 629], [951, 631], [936, 602], [970, 588], [963, 560], [982, 554], [975, 527], [1001, 518], [994, 490], [1021, 481], [1014, 433], [1047, 405]]]),

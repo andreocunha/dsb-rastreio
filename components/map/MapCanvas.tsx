@@ -4,7 +4,7 @@ import { initEngine, type EngineAPI, type LiveBoat } from '@/lib/map/engine';
 import { ROUTE_COLORS, type Boat, type EditTool } from '@/lib/map/types';
 import { Icon } from './Icon';
 import { venueById } from '@/lib/map/venues';
-import { feedStatusFor, isRecentPosition } from '@/lib/tracker/freshness';
+import { feedStatusFor, feedToneFor, isRecentPosition } from '@/lib/tracker/freshness';
 import { SosNotices, type PublicSos } from '@/lib/tracker/sos-notices';
 import { SosNotice } from './SosNotice';
 import { Fleet, TeamAvatar } from './Fleet';
@@ -15,7 +15,7 @@ import { areasRowId, courseRowId, parseAreas, parseGeometry, parseLiveCourse } f
 
 const TOOLS = [
   {id: 'buoy', label: 'Boias', icon: 'buoy', hint: 'Arraste uma boia para mover. Toque na água para adicionar ou numa boia para remover.'},
-  {id: 'route', label: 'Percurso', icon: 'route', hint: 'Arraste os pontos para ajustar. Toque sobre uma linha para inserir um ponto, ou na água para continuar.'},
+  {id: 'route', label: 'Percurso', icon: 'route', hint: 'Toque num ponto para escolher o percurso. Arraste os pontos para ajustar, toque sobre a linha para inserir um ponto ou na água para continuar.'},
   {id: 'finish', label: 'Chegada', icon: 'flag', hint: 'Arraste as extremidades para ajustar a chegada. Para criar outra, marque dois pontos na água.'},
   {id: 'maintenance', label: 'Apoio', icon: 'tool', hint: 'Área comum a todas as provas. Arraste os cantos para ajustar ou toque na água para adicionar pontos.'},
   {id: 'waiting', label: 'Espera', icon: 'boat', hint: 'Área de espera dos competidores. Arraste os cantos para ajustar; a posição é compartilhada entre as provas.'},
@@ -54,7 +54,8 @@ export default function MapCanvas() {
   const [editing, setEditing] = useState(false);
   const [embed, setEmbed] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
-  const [feedStatus, setFeedStatus] = useState('Conectando ao rastreamento…');
+  const [feedStatus, setFeedStatus] = useState('Conectando…');
+  const [feedTone, setFeedTone] = useState<'live' | 'stale' | 'wait' | 'demo'>('wait');
   const [selected, setSelected] = useState<string | null>(null);
   const [fleet, setFleet] = useState<Boat[]>([]);
   const [style, setStyle] = useState<'chart' | 'satellite'>('chart');
@@ -185,7 +186,7 @@ export default function MapCanvas() {
     function update() {
       if(isDemo)return;
       const boats=[...rows.values()];engine.setLiveBoats(boats);
-      setFeedStatus(feedStatusFor(phase,healthy,boats));
+      setFeedStatus(feedStatusFor(phase,healthy,boats));setFeedTone(feedToneFor(phase,healthy,boats));
       const wanted=new URLSearchParams(location.search).get('boat');
       if(first && wanted && rows.has(wanted)){engine.follow(wanted);first=false;}
     }
@@ -234,7 +235,7 @@ export default function MapCanvas() {
     function visibility(){clearTimeout(reconnect);if(document.hidden){source?.close();source=null;}else connect();}
     document.addEventListener('visibilitychange',visibility);window.addEventListener('online',connect);
     connect();
-    if(isDemo){setFeedStatus('Demonstração · Dados fictícios');engine.setLighting('noon');}
+    if(isDemo){setFeedStatus('Demonstração · Dados fictícios');setFeedTone('demo');engine.setLighting('noon');}
     let preference='';try{preference=localStorage.getItem('dsb:map:view')??'';}catch{}
     const requestedView=new URLSearchParams(location.search).get('view');
     // 3D is the default; the simplified view stays one tap away and is remembered.
@@ -285,8 +286,9 @@ export default function MapCanvas() {
   async function toggleEditor() { if (editing) closeEditor(); else await openEditor(); }
   function selectCourse(id: string) {
     const stored = storedRef.current;
+    // The engine keeps the current tool while editing, so the panel keeps it selected too.
     engineRef.current?.loadCourse(venueId, id, parseGeometry(stored.get(courseRowId(venueId, id))), parseAreas(stored.get(areasRowId(venueId))));
-    setActiveTool(null); setSaveState({state: 'idle'});
+    setSaveState({state: 'idle'});
   }
   async function publishCourse() {
     setSaveState({state: 'saving'});
@@ -314,7 +316,7 @@ export default function MapCanvas() {
 
   return (
     <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
-      {feedStatus && <div className="tracker-feed" role="status">{feedStatus}</div>}
+      {feedStatus && <div className="tracker-feed" data-tone={feedTone} role="status">{feedStatus}</div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
         <><button onClick={pauseDemo}>{demoPaused?'▶ Continuar':'Ⅱ Pausar'}</button><select aria-label="Velocidade da demonstração" value={demoSpeed} onChange={e=>{const speed=Number(e.target.value);setDemoSpeed(speed);engineRef.current?.setDemoSpeed(speed);}}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select><button onClick={()=>openDemo(false)}>Voltar ao vivo</button></>
@@ -353,7 +355,7 @@ export default function MapCanvas() {
         <div className="publish-row">{isLive ? <span className="live-badge">● No ar para o público</span> : <button className="publish-button" onClick={()=>void publishCourse()}>Mostrar esta prova ao público</button>}</div>
         {currentCourse && <div className="course-meta"><strong>{currentCourse.schedule}</strong><span>Traçado aproximado das referências</span></div>}
         <div className="editor-tools">{TOOLS.map(tool => <button key={tool.id} onClick={() => selectTool(tool.id)} aria-pressed={activeTool === tool.id}><Icon name={tool.icon}/><span>{tool.label}</span></button>)}</div><p className="editor-hint">{TOOLS.find(t => t.id === activeTool)?.hint || 'Escolha uma prova e uma ferramenta para ajustar seus pontos no mapa.'}</p>
-        {activeTool === 'route' && <><div className="route-colors">{ROUTE_COLORS.map(c => <button key={c.id} aria-label={`Percurso ${c.label}`} aria-pressed={routeColor === c.hex} style={{background: c.hex}} onClick={() => {setRouteColor(c.hex); engineRef.current?.newRoute(c.hex);}}/>)}</div><div className="editor-actions"><button onClick={() => engineRef.current?.undoRoutePoint()}>Desfazer</button><button onClick={() => engineRef.current?.newRoute(routeColor)}>Novo percurso</button><button onClick={() => engineRef.current?.clearAllRoutes()}>Limpar</button></div></>}
+        {activeTool === 'route' && <><div className="route-colors">{ROUTE_COLORS.map(c => <button key={c.id} aria-label={`Percurso ${c.label}`} aria-pressed={routeColor === c.hex} style={{background: c.hex}} onClick={() => {setRouteColor(c.hex); engineRef.current?.newRoute(c.hex);}}/>)}</div><div className="editor-actions"><button onClick={() => engineRef.current?.undoRoutePoint()}>Desfazer ponto</button><button onClick={() => engineRef.current?.newRoute(routeColor)}>Novo percurso</button><button onClick={() => engineRef.current?.deleteActiveRoute()}>Apagar percurso</button><button onClick={() => engineRef.current?.clearAllRoutes()}>Apagar todos</button></div></>}
         {activeTool === 'finish' && <button className="text-button" onClick={() => engineRef.current?.clearFinishLine()}>Limpar chegada</button>}
         {activeTool === 'maintenance' && <button className="text-button" onClick={() => engineRef.current?.clearMaintenanceArea()}>Limpar área de apoio</button>}
         {activeTool === 'waiting' && <button className="text-button" onClick={() => engineRef.current?.clearWaitingArea()}>Limpar área de espera</button>}

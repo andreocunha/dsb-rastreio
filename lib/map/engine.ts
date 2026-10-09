@@ -95,6 +95,8 @@ export interface EngineAPI {
   newRoute: (color: string) => void;
   undoRoutePoint: () => void;
   deleteRoute: (id: string) => void;
+  /** Removes the selected route (the last one touched); undoable with undoCourse. */
+  deleteActiveRoute: () => void;
   clearAllRoutes: () => void;
   destroy: () => void;
 }
@@ -323,7 +325,7 @@ export function initEngine(
     const venueChanged = state.venueId !== c.venue;
     state.venueId = c.venue; state.courseId = c.course;
     Object.assign(state, resolveCourse(c));
-    state.activeRouteId = null; state.editTool = editingSession ? state.editTool : null;
+    state.editTool = editingSession ? state.editTool : null; selectFirstRoute();
     buoyIdCounter = Math.max(0, ...state.buoys.map(b => Number(b.id.split('-').pop()) || 0));
     routeIdCounter = Math.max(0, ...state.routes.map(r => Number(r.id.split('-').pop()) || 0));
     renumberBuoys();
@@ -371,6 +373,10 @@ export function initEngine(
 
   function getActiveRoute() {
     return state.routes.find((r) => r.id === state.activeRouteId) ?? null;
+  }
+  /** With the route tool on, one route is always selected so its buttons have a target. */
+  function selectFirstRoute() {
+    state.activeRouteId = state.editTool === 'route' ? state.routes[0]?.id ?? null : null;
   }
 
   const BACKGROUND_MARGIN = 80;
@@ -713,11 +719,11 @@ export function initEngine(
     loadCourse(venue, course, geometry, areas) {
       showCourse({venue, course, geometry, areas, updatedAt: ''}, true);
     },
-    resetCourse() { Object.assign(state, copyCourse({...resolveCourse({venue: state.venueId ?? 'imboassica', course: state.courseId, geometry: null, areas: null, updatedAt: ''}), maintenanceArea: state.maintenanceArea, waitingArea: state.waitingArea})); state.activeRouteId = null; renumberBuoys(); persist(); },
+    resetCourse() { Object.assign(state, copyCourse({...resolveCourse({venue: state.venueId ?? 'imboassica', course: state.courseId, geometry: null, areas: null, updatedAt: ''}), maintenanceArea: state.maintenanceArea, waitingArea: state.waitingArea})); selectFirstRoute(); renumberBuoys(); persist(); },
     undoCourse() {
       const previous = history.pop();
       if (!previous) return;
-      Object.assign(state, previous); state.activeRouteId = null; renumberBuoys(); persist(false);
+      Object.assign(state, previous); selectFirstRoute(); renumberBuoys(); persist(false);
     },
     fit,
     zoom(delta) { state.zoom = Math.max(config.zoomMin, Math.min(config.zoomMax, state.zoom + delta)); wake(); },
@@ -731,8 +737,8 @@ export function initEngine(
     setEditTool(tool: EditTool) {
       if (state.editTool === 'buoy' && tool !== 'buoy') renumberBuoys();
       if (state.editTool === 'route' && tool !== 'route') state.activeRouteId = null;
-      if (tool === 'route' && !state.activeRouteId) state.activeRouteId = state.routes[0]?.id ?? null;
       state.editTool = tool;
+      if (tool === 'route' && !state.activeRouteId) selectFirstRoute();
       persist();
     },
     clearFinishLine() { state.finishLine = { p1: null, p2: null }; persist(); },
@@ -756,6 +762,12 @@ export function initEngine(
     deleteRoute(id: string) {
       state.routes = state.routes.filter((r) => r.id !== id);
       if (state.activeRouteId === id) state.activeRouteId = null;
+      persist();
+    },
+    deleteActiveRoute() {
+      if (!getActiveRoute()) return;
+      state.routes = state.routes.filter((r) => r.id !== state.activeRouteId);
+      selectFirstRoute();
       persist();
     },
     clearAllRoutes() { state.routes = []; state.activeRouteId = null; persist(); },

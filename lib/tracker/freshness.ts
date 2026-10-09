@@ -11,15 +11,25 @@ export function positionAge(capturedAt: string | undefined, now = Date.now()) {
   if (seconds < 3600) return `há ${Math.floor(seconds / 60)} min`;
   return `há ${Math.floor(seconds / 3600)} h`;
 }
+/** Colour of the status dot: live (green), stale (amber) or waiting for the connection (grey). */
+export function feedToneFor(
+  phase: 'connecting' | 'connected' | 'disconnected',
+  healthy: boolean,
+  boats: { capturedAt: string }[],
+  now = Date.now(),
+): 'live' | 'stale' | 'wait' {
+  if (phase !== 'connected') return 'wait';
+  return healthy && (!boats.length || boats.some(boat => isRecentPosition(boat.capturedAt, now))) ? 'live' : 'stale';
+}
 export function feedStatusFor(
   phase: 'connecting' | 'connected' | 'disconnected',
   healthy: boolean,
   boats: { capturedAt: string }[],
   now = Date.now(),
 ) {
-  if (phase === 'connecting') return 'Conectando ao rastreamento…';
-  if (phase === 'disconnected') return 'Conexão indisponível · Reconectando';
-  if (!healthy) return 'Servidor sem atualização · Últimas posições';
+  if (phase === 'connecting') return 'Conectando…';
+  if (phase === 'disconnected') return 'Reconectando…';
+  if (!healthy) return 'Últimas posições · Servidor sem atualização';
   // Nothing to say until the first boat sets off: no status pill over the map.
   if (!boats.length) return '';
   const fresh = boats.filter(boat => isRecentPosition(boat.capturedAt, now)).length;

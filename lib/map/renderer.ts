@@ -47,13 +47,15 @@ export function renderFrame(ctx: CanvasRenderingContext2D, state: MapState, conf
     drawBoat(ctx, state, config, boat, boat.id === state.followBoatId);
   }
   if (state.editTool) {
-    for (const {point} of editHandles(state)) {
+    for (const {point, routeId} of editHandles(state)) {
       const p = gp2s(point, config, state);
+      ctx.globalAlpha = routeId && routeId !== state.activeRouteId ? 0.4 : 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
       ctx.fillStyle = '#fffff7'; ctx.fill();
       ctx.strokeStyle = '#256d5a'; ctx.lineWidth = 2; ctx.stroke();
       ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fillStyle = '#256d5a'; ctx.fill();
     }
+    ctx.globalAlpha = 1;
   }
 }
 

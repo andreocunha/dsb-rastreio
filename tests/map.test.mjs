@@ -170,21 +170,14 @@ test('race limits, waiting berths, and support patrols remain separated for all 
   }
 });
 
-test('Sprint crosses the buoy line outside the right buoy outbound and between the buoys inbound', () => {
-  const {defaultCourse}=modules()('lib/map/courses.ts'); const course=defaultCourse('sprint');
-  const [a,b]=course.buoys; const points=course.routes[0].points;
-  const crossings=[];
-  const cross=(x,y)=>x.lon*y.lat-x.lat*y.lon;
-  const subtract=(x,y)=>({lon:x.lon-y.lon,lat:x.lat-y.lat});
-  const gate=subtract(b,a);
-  for(let i=1;i<points.length;i++) {
-    const p=points[i-1],v=subtract(points[i],p),w=subtract(a,p),denom=cross(v,gate);
-    if(Math.abs(denom)<1e-15) continue;
-    const t=cross(w,gate)/denom, u=cross(w,v)/denom;
-    if(t>0 && t<=1) crossings.push(u);
-  }
-  assert.ok(crossings[0]>1,'outbound passes to the right, outside both buoys');
-  assert.ok(crossings.slice(1).some(u=>u>0 && u<1),'return passes inside the gate');
+test('Sprint runs straight from the middle of the start gate to the finish line', () => {
+  const load=modules(); const {defaultCourse}=load('lib/map/courses.ts'); const {distanceMeters}=load('lib/map/simulation.ts');
+  const course=defaultCourse('sprint'); const [a,b]=course.buoys; const points=course.routes[0].points;
+  assert.equal(course.routes.length,1); assert.equal(points.length,2);
+  const mid=(x,y)=>({lat:(x.lat+y.lat)/2,lon:(x.lon+y.lon)/2});
+  const {p1,p2}=course.finishLine;
+  assert.ok(distanceMeters(points[0],mid(a,b))<15,'starts between the start buoys');
+  assert.ok(distanceMeters(points[1],mid(p1,p2))<15,'ends at the finish line');
 });
 
 test('extra satellite zoom reuses native level 18 rather than requesting level 21 tiles', () => {
@@ -238,7 +231,7 @@ test('public demo ignores live points and stored course edits, can pause, and do
 
 
 test('healthy stream becomes stale without new GPS points and recovers on the next fix', () => {
-  const {feedStatusFor,isRecentPosition,positionAge}=modules()('lib/tracker/freshness.ts');
+  const {feedStatusFor,feedToneFor,isRecentPosition,positionAge}=modules()('lib/tracker/freshness.ts');
   const now=Date.parse('2026-09-27T01:29:00Z');
   const boats=[{capturedAt:new Date(now).toISOString()}];
   assert.equal(feedStatusFor('connected',true,boats,now),'Ao vivo');
@@ -246,8 +239,12 @@ test('healthy stream becomes stale without new GPS points and recovers on the ne
   assert.equal(feedStatusFor('connected',true,boats,now+180000),'Sem sinal dos trackers · Última posição há 3 min');
   assert.equal(feedStatusFor('connected',true,[...boats,{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo · 1 sem atualização');
   assert.equal(feedStatusFor('connected',true,[{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo');
-  assert.equal(feedStatusFor('connected',false,boats,now),'Servidor sem atualização · Últimas posições');
-  assert.equal(feedStatusFor('disconnected',true,boats,now),'Conexão indisponível · Reconectando');
+  assert.equal(feedStatusFor('connected',false,boats,now),'Últimas posições · Servidor sem atualização');
+  assert.equal(feedStatusFor('disconnected',true,boats,now),'Reconectando…');
+  assert.equal(feedToneFor('connected',true,boats,now),'live');
+  assert.equal(feedToneFor('connected',true,boats,now+180000),'stale');
+  assert.equal(feedToneFor('connected',false,boats,now),'stale');
+  assert.equal(feedToneFor('disconnected',true,boats,now),'wait');
   assert.equal(positionAge(undefined,now),'Sem posição');
 });
 

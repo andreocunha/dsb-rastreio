@@ -29,45 +29,54 @@ function ribbon(points:P[],closed=false){
   g.setAttribute('aSide',new T.Float32BufferAttribute(side,1));
   g.setAttribute('aDist',new T.Float32BufferAttribute(dist,1));
   g.setAttribute('aDir',new T.Float32BufferAttribute(new Float32Array(side.length*2),2));
-  g.setAttribute('aExtend',new T.Float32BufferAttribute(new Float32Array(side.length),1));
   g.setIndex(index);
   return g;
 }
 
 /**
- * One quad per segment (no mitred corners), so the along-the-line coordinate is exact
- * across the whole width: marks drawn on it stay perpendicular. Ends extend by half the
- * width to close the corners.
+ * One quad per segment, so the along-the-line coordinate is exact across the whole width:
+ * marks drawn on it stay perpendicular. Neighbouring quads share a mitred edge at each
+ * vertex, so the path reads as one continuous line with clean corners.
  */
 function segments(points:P[]){
-  const positions:number[]=[],miter:number[]=[],side:number[]=[],dist:number[]=[],dir:number[]=[],extend:number[]=[],index:number[]=[];
+  const pts=points.filter((p,i)=>!i||Math.hypot(p.x-points[i-1].x,p.z-points[i-1].z)>=.01);
+  const dirs=pts.slice(1).map((b,i)=>{const a=pts[i],l=Math.hypot(b.x-a.x,b.z-a.z);return {x:(b.x-a.x)/l,z:(b.z-a.z)/l,l};});
+  // Offset direction at each vertex: the bisector of both neighbours, scaled so the edges
+  // stay half a width from each segment (clamped so sharp turns never spike).
+  const miters=pts.map((_,i)=>{
+    const a=dirs[i-1]??dirs[i],b=dirs[i]??dirs[i-1];
+    let nx=-(a.z+b.z),nz=a.x+b.x;const l=Math.hypot(nx,nz);
+    if(l<1e-6){nx=-b.z;nz=b.x;}else{nx/=l;nz/=l;}
+    const m=Math.min(3,1/Math.max(1e-3,nx*-b.z+nz*b.x));
+    return [nx*m,nz*m] as const;
+  });
+  const positions:number[]=[],miter:number[]=[],side:number[]=[],dist:number[]=[],dir:number[]=[],index:number[]=[];
   let along=0;
-  for(let i=1;i<points.length;i++){
-    const a=points[i-1],b=points[i],l=Math.hypot(b.x-a.x,b.z-a.z);
-    if(l<.01)continue;
-    const dx=(b.x-a.x)/l,dz=(b.z-a.z)/l,base=positions.length/3;
-    for(const [p,d,e] of [[a,along,-1],[b,along+l,1]] as const)for(const s of [-1,1]){
-      positions.push(p.x,0,p.z);miter.push(-dz,dx);side.push(s);dist.push(d);dir.push(dx,dz);extend.push(e);
+  dirs.forEach((d,i)=>{
+    const base=positions.length/3;
+    for(const [j,at] of [[i,along],[i+1,along+d.l]] as const)for(const s of [-1,1]){
+      positions.push(pts[j].x,0,pts[j].z);miter.push(...miters[j]);side.push(s);dist.push(at);dir.push(d.x,d.z);
     }
     index.push(base,base+1,base+2,base+1,base+3,base+2);
-    along+=l;
-  }
+    along+=d.l;
+  });
   const g=new T.BufferGeometry();
   g.setAttribute('position',new T.Float32BufferAttribute(positions,3));
   g.setAttribute('aMiter',new T.Float32BufferAttribute(miter,2));
   g.setAttribute('aSide',new T.Float32BufferAttribute(side,1));
   g.setAttribute('aDist',new T.Float32BufferAttribute(dist,1));
   g.setAttribute('aDir',new T.Float32BufferAttribute(dir,2));
-  g.setAttribute('aExtend',new T.Float32BufferAttribute(extend,1));
   g.setIndex(index);
   return g;
 }
 
-const ribbonVertex=`attribute vec2 aMiter,aDir;attribute float aSide,aDist,aExtend;
+const ribbonVertex=`attribute vec2 aMiter,aDir;attribute float aSide,aDist;
 uniform float pixelAngle,widthPx,lift;varying float vSide,vDist,vMpp;
 void main(){vSide=aSide;vec4 w=modelMatrix*vec4(position,1.);
-float mpp=length(cameraPosition-w.xyz)*pixelAngle,ext=aExtend*widthPx*.5*mpp;vMpp=mpp;vDist=aDist+ext;
-w.xz+=aMiter*aSide*widthPx*.5*mpp+aDir*ext;w.y+=lift;
+float mpp=length(cameraPosition-w.xyz)*pixelAngle;vMpp=mpp;
+// Distance along the segment of the offset vertex itself: exact on mitred corners too.
+vec2 offset=aMiter*aSide*widthPx*.5*mpp;vDist=aDist+dot(offset,aDir);
+w.xz+=offset;w.y+=lift;
 gl_Position=projectionMatrix*viewMatrix*w;}`;
 
 const common=`precision highp float;uniform float time,mpp,dim;uniform vec3 color;varying float vSide,vDist,vMpp;`;

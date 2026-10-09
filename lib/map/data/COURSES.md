@@ -24,6 +24,6 @@ O editor permite arrastar boias, vértices, chegada, apoio e espera, inserir pon
 
 A manutenção foi alinhada à captura mais recente do organizador, usando as quatro boias do Match Race como referências de posição. É a mesma área inferior para todas as provas. A área de espera fica separada, junto à margem acima da manutenção. As duas ficam em `dsb:event-areas:v1`; ajustes são compartilhados entre provas. Na primeira migração, uma manutenção já editada no Match Race é preservada como área comum. Restaurar o modelo de uma prova mantém essas áreas.
 
-No Sprint, o traçado sobe por fora da boia direita, contorna-a por cima e retorna entre as duas boias. A migração substitui somente o antigo traçado reto intacto, preservando percursos personalizados.
+No Sprint, as duas boias marcam a largada e o traçado é uma reta do meio dessa linha até a chegada, como na imagem de referência.
 
 A simulação mantém Barcos 1 e 2 no Match Race (um em cada traçado), Barco 1 no Slalom e os demais competidores na espera. As outras modalidades usam os seis competidores. Não há alternância automática de baterias. Apoios e jetskis patrulham posições escolhidas na água, fora dos circuitos, com deslocamentos de até 5 m ao redor de cada posição e menos de 1 nó. A velocidade dos competidores usa distância em metros, evitando aceleração artificial em segmentos longos. Resgates não são disparados automaticamente; isso depende de futura integração operacional.
