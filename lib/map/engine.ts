@@ -85,6 +85,8 @@ export interface EngineAPI {
   setPaused: (paused: boolean) => void;
   /** The user is scrolling page UI (the fleet strip): render the map less often so the GPU stays free. */
   setUiBusy: (busy: boolean) => void;
+  /** O app que embute o mapa cobriu a tela (ex.: bottom sheet): desenha devagar até descobrir. */
+  setCovered: (covered: boolean) => void;
   addBuoy: (lat: number, lon: number) => Buoy;
   removeBuoy: (id: string) => void;
   getBuoys: () => Buoy[];
@@ -236,6 +238,10 @@ export function initEngine(
   let wakeTimer: ReturnType<typeof setTimeout> | undefined;
   let running = true;
   let uiBusy = false;
+  // Coberto pelo app que embute o mapa: atrás do véu do sheet ninguém nota 4 quadros por segundo,
+  // e a animação do sheet fica com a CPU (no Android o mapa divide o processo com o app).
+  let covered = false;
+  const COVERED_FPS = 4;
   // Eco mode (3D): full frame rate only while someone interacts or the camera is moving.
   // A race is watched for hours with the phone in hand; idle frames at 30 fps look the same
   // (boats cover a pixel or two per frame) and halve the heat and battery drain.
@@ -580,10 +586,11 @@ export function initEngine(
       const eco = paced(ECO_FPS) < 28 ? 2 * paced(ECO_FPS) : paced(ECO_FPS);
       interval = state.reducedMotion ? paced(15) : uiBusy || !interactive ? Math.max(full, eco) : full;
     } else interval = 1000 / (state.reducedMotion?15:interpolating||state.dragging?60:live?15:30);
+    if (covered) interval = Math.max(interval, 1000 / COVERED_FPS);
     // Diagnostics for on-device tuning (read by test scripts, invisible to users).
     if (canvas.dataset && time - lastFleetTime > 450) { canvas.dataset.vsync = vsync.toFixed(1); canvas.dataset.interval = interval.toFixed(1); }
     if (lastTime && time - lastTime < interval - (view3D ? vsync / 2 : 1)) {
-      if (view3D) schedule(interval - (time - lastTime));
+      if (view3D || covered) schedule(interval - (time - lastTime));
       else rafId = requestAnimationFrame(frame);
       return;
     }
@@ -642,7 +649,7 @@ export function initEngine(
     }
 
 
-    if (view3D) schedule(interval - (now() - time));
+    if (view3D || covered) schedule(interval - (now() - time));
     else rafId = requestAnimationFrame(frame);
   }
 
@@ -731,6 +738,7 @@ export function initEngine(
     setStyle(style) { state.style = style; },
     setPaused(paused) { state.paused = paused; },
     setUiBusy(busy) { uiBusy = busy; if (!busy) wake(); },
+    setCovered(value) { if (covered === value) return; covered = value; if (!value) wake(); },
     addBuoy,
     removeBuoy,
     getBuoys: () => [...state.buoys],

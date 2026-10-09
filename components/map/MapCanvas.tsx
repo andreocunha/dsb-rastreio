@@ -175,6 +175,9 @@ export default function MapCanvas() {
       onCourseChange: (id, undo) => { setCourseId(id); setCanUndo(undo); },
     }, !isDemo,isDemo);
     engineRef.current = engine;
+    // O app que embute o mapa avisa quando um bottom sheet cobre a tela (ver dsb-app, Sheet).
+    const onHost=(event:MessageEvent)=>{if(event.source===window.parent&&event.data?.type==='dsb-tracker:covered')engine.setCovered(!!event.data.covered);};
+    window.addEventListener('message',onHost);
     const initialVenue=venueById(isDemo?'imboassica':new URLSearchParams(location.search).get('venue') ?? undefined);
     if(initialVenue.id!=='imboassica') {engine.selectVenue(initialVenue.id);setVenueId(initialVenue.id);}
     let disposed=false, source:EventSource|null=null, first=true;
@@ -245,7 +248,7 @@ export default function MapCanvas() {
     }
     // Refresh stale labels locally even when there are no network changes.
     const staleTimer=setInterval(update,5000);
-    return ()=>{disposed=true;clearTimeout(reconnect);clearTimeout(batch);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);engine.destroy();engineRef.current=null;};
+    return ()=>{disposed=true;clearTimeout(reconnect);clearTimeout(batch);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);window.removeEventListener('message',onHost);engine.destroy();engineRef.current=null;};
   }, []);
 
   async function changeView(enabled:boolean) {
