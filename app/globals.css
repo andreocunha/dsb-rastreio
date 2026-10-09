@@ -111,6 +111,8 @@ a { color: inherit; text-decoration: none; }
 /* A small status pill: a coloured dot and a few words, quiet over the map. */
 .tracker-feed{gap:7px;padding:6px 12px 6px 10px;border:1px solid rgba(31,77,66,.08);border-radius:999px;background:rgba(255,254,248,.84);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 2px 10px rgba(8,34,32,.08);font:500 11.5px system-ui,sans-serif;letter-spacing:.01em;color:#3d5a50}
 .tracker-feed::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:#2fae72;box-shadow:0 0 0 3px rgba(47,174,114,.16)}
+/* Always one line: the dot never wraps away and long text ends in an ellipsis. */
+.tracker-feed span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tracker-feed[data-tone=stale]::before{background:#d9932b;box-shadow:0 0 0 3px rgba(217,147,43,.16)}
 .tracker-feed[data-tone=wait]::before{background:#93a39b;box-shadow:none;animation:feed-wait 1.4s ease-in-out infinite}
 .tracker-feed[data-tone=demo]::before{background:#d9932b;box-shadow:none}
@@ -143,7 +145,7 @@ a { color: inherit; text-decoration: none; }
 .view-controls{position:absolute;top:24px;right:24px;z-index:16;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .view-switch{display:flex;gap:3px;padding:4px;border:1px solid #e3e9e0;background:#fffef7f5;border-radius:13px;box-shadow:var(--shadow)}.view-switch button{padding:9px 13px;border-radius:9px;background:transparent;color:#6f8176;font-size:12px;font-weight:600}.view-switch button[aria-pressed=true]{background:#286853;color:#fffbe9}.view-switch button:disabled{opacity:.65}
 .light-picker{display:flex;align-items:center;gap:7px;padding:9px 12px;border-radius:12px;background:#fffef7f0;color:#706443;box-shadow:var(--shadow)}.light-picker select{border:0;background:transparent;color:inherit;font:500 12px system-ui;max-width:150px}.view-message{position:absolute;z-index:19;top:140px;left:50%;transform:translateX(-50%);padding:12px 16px;background:#fffef7;border-radius:12px;font-size:12px;max-width:90vw}
-@media(max-width:699px){.view-controls{top:14px;right:14px;gap:7px}.view-switch button{font-size:10px;padding:9px 8px}.venue-picker{max-width:calc(100% - 162px)}.venue-picker select{max-width:110px;min-width:0;font-size:11px}.venue-picker{font-size:0;gap:4px}.venue-picker button{font-size:18px}.light-picker{padding:8px}.light-picker select{font-size:10px;max-width:105px}.race-app--3d .tracker-feed{left:14px;transform:none;max-width:calc(100% - 150px);top:75px!important;gap:6px;flex-wrap:wrap;padding:8px 10px}.race-app--3d .sos-notice{top:143px}}
+@media(max-width:699px){.view-controls{top:14px;right:14px;gap:7px}.view-switch button{font-size:10px;padding:9px 8px}.venue-picker{max-width:calc(100% - 162px)}.venue-picker select{max-width:110px;min-width:0;font-size:11px}.venue-picker{font-size:0;gap:4px}.venue-picker button{font-size:18px}.light-picker{padding:8px}.light-picker select{font-size:10px;max-width:105px}.race-app--3d .tracker-feed{left:14px;transform:none;max-width:calc(100% - 150px);top:75px!important}.race-app--3d .sos-notice{top:143px}}
 
 .demo-controls{position:absolute;z-index:16;top:24px;left:24px;display:flex;gap:4px;align-items:center;border:1px solid #dbe5df;background:#fffdf3ef;padding:5px;border-radius:13px;box-shadow:0 3px 16px #16342b14}
 .demo-controls button,.demo-controls select{border:0;background:transparent;color:#255b4b;border-radius:8px;font:600 12px system-ui;padding:9px 10px;cursor:pointer}
@@ -232,7 +234,7 @@ a { color: inherit; text-decoration: none; }
 /* Inside the DSB app: only the map, the fleet and a small status. */
 .race-app--embed .tracker-feed { font-size: 11px; }
 @media (max-width: 699px) {
-  .race-app--embed .tracker-feed { top: 14px !important; left: 14px; right: auto; transform: none; max-width: calc(100% - 90px); padding: 8px 12px; }
+  .race-app--embed .tracker-feed { top: 21px !important; left: 14px; right: auto; transform: none; max-width: calc(100% - 84px); padding: 6px 12px 6px 10px; }
   .race-app--embed.race-app--demo .demo-controls { top: 58px; }
 }
 @media (max-width: 699px) { .race-app:not(.race-app--demo):not(.race-app--embed) .demo-controls { top: 146px; } .race-app--embed:not(.race-app--demo) .demo-controls { top: 58px; } }

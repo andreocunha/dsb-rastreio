@@ -29,12 +29,12 @@ export function feedStatusFor(
 ) {
   if (phase === 'connecting') return 'Conectando…';
   if (phase === 'disconnected') return 'Reconectando…';
-  if (!healthy) return 'Últimas posições · Servidor sem atualização';
+  if (!healthy) return 'Servidor sem atualização';
   // Nothing to say until the first boat sets off: no status pill over the map.
   if (!boats.length) return '';
   const fresh = boats.filter(boat => isRecentPosition(boat.capturedAt, now)).length;
   if (fresh === boats.length) return 'Ao vivo';
   if (fresh) return `Ao vivo · ${boats.length - fresh} sem atualização`;
   const latest = boats.reduce((a, b) => Date.parse(b.capturedAt) > Date.parse(a.capturedAt) ? b : a);
-  return `Sem sinal dos trackers · Última posição ${positionAge(latest.capturedAt, now)}`;
+  return `Sem sinal ${positionAge(latest.capturedAt, now)}`;
 }

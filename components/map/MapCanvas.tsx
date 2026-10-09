@@ -317,7 +317,7 @@ export default function MapCanvas() {
 
   return (
     <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
-      {feedStatus && <div className="tracker-feed" data-tone={feedTone} role="status">{feedStatus}</div>}
+      {feedStatus && <div className="tracker-feed" data-tone={feedTone} role="status"><span>{feedStatus}</span></div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
         <><button onClick={pauseDemo}>{demoPaused?'▶ Continuar':'Ⅱ Pausar'}</button><select aria-label="Velocidade da demonstração" value={demoSpeed} onChange={e=>{const speed=Number(e.target.value);setDemoSpeed(speed);engineRef.current?.setDemoSpeed(speed);}}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select><button onClick={()=>openDemo(false)}>Voltar ao vivo</button></>

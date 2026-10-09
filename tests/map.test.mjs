@@ -236,10 +236,10 @@ test('healthy stream becomes stale without new GPS points and recovers on the ne
   const boats=[{capturedAt:new Date(now).toISOString()}];
   assert.equal(feedStatusFor('connected',true,boats,now),'Ao vivo');
   assert.equal(isRecentPosition(boats[0].capturedAt,now+15000),false);
-  assert.equal(feedStatusFor('connected',true,boats,now+180000),'Sem sinal dos trackers · Última posição há 3 min');
+  assert.equal(feedStatusFor('connected',true,boats,now+180000),'Sem sinal há 3 min');
   assert.equal(feedStatusFor('connected',true,[...boats,{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo · 1 sem atualização');
   assert.equal(feedStatusFor('connected',true,[{capturedAt:new Date(now+180000).toISOString()}],now+180000),'Ao vivo');
-  assert.equal(feedStatusFor('connected',false,boats,now),'Últimas posições · Servidor sem atualização');
+  assert.equal(feedStatusFor('connected',false,boats,now),'Servidor sem atualização');
   assert.equal(feedStatusFor('disconnected',true,boats,now),'Reconectando…');
   assert.equal(feedToneFor('connected',true,boats,now),'live');
   assert.equal(feedToneFor('connected',true,boats,now+180000),'stale');
