@@ -14,7 +14,12 @@ type Confirm = {title: string; message: string; action: string; danger?: boolean
 
 const COLORS: [string, string, string][] = [['blue', 'Azul', '#2f86ff'], ['green', 'Verde-limão', '#7bd63a'], ['gold', 'Amarelo', '#ffc629'], ['orange', 'Laranja', '#ff7a1f'], ['purple', 'Roxo', '#a371ff'], ['cyan', 'Ciano', '#41d6f5']];
 const colorOf = (id?: string) => COLORS.find(c => c[0] === id)?.[2] ?? '#2f86ff';
-const byName = (a: Team, b: Team) => a.name.localeCompare(b.name, 'pt-BR');
+const HULLS: [string, string][] = [['cat', 'Catamarã'], ['mono', 'Monocasco'], ['jetski', 'Jet ski de resgate'], ['support', 'Barco de apoio']];
+/** Rescue jet ski and support boat: tracked on the map, but not competitors. */
+const isCraft = (team?: Team) => team?.boat_hull === 'jetski' || team?.boat_hull === 'support';
+const hullLabel = (team: Team) => HULLS.find(h => h[0] === team.boat_hull)?.[1] ?? 'Catamarã';
+// Competitors first, in name order (the order the radio trackers are numbered in), then rescue and support.
+const byName = (a: Team, b: Team) => Number(isCraft(a)) - Number(isCraft(b)) || a.name.localeCompare(b.name, 'pt-BR');
 
 /** The course the map is showing, and what the organizer can do with it (only on the map). */
 export interface CourseControls {
@@ -166,33 +171,42 @@ function CourseTab({course}: {course: CourseControls}) {
 
 function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; editing: string | null; setEditing: (id: string | null) => void; busy: boolean; mutate: (input: Record<string, unknown>, done?: string) => Promise<void>}) {
   const [adding, setAdding] = useState(false);
+  // The hull picked in the open form: rescue and support craft have no motor count.
+  const [hull, setHull] = useState<string | null>(null);
+  const open = (id: string | null) => { setHull(null); setEditing(id); };
+  const row = (team: Team) => {
+    const draft = hull ?? team.boat_hull ?? 'cat', motors = team.boat_motors ?? 1;
+    return <li key={team.id}>
+      <button className="adm-row" aria-expanded={editing === team.id} onClick={() => open(editing === team.id ? null : team.id)}>
+        <TeamBadge team={team} />
+        <span className="adm-row-main"><strong>{team.name}</strong><small>{hullLabel(team)}{isCraft(team) ? '' : ` · ${motors} ${motors > 1 ? 'motores' : 'motor'}`}</small></span>
+        <span className="adm-swatch" style={{background: colorOf(team.color)}} aria-label={COLORS.find(c => c[0] === team.color)?.[1]} />
+      </button>
+      {editing === team.id && <form className="adm-edit" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'style', teamId: team.id, color: form.get('color'), hull: form.get('hull'), motors: Number(form.get('motors') ?? motors)}, `${team.name} atualizado no mapa.`); }}>
+        <fieldset className="adm-colors"><legend>Cor no mapa</legend>
+          {COLORS.map(([id, label, hex]) => <label key={id} title={label}><input type="radio" name="color" value={id} defaultChecked={(team.color ?? 'blue') === id} /><span style={{background: hex}} /></label>)}
+        </fieldset>
+        <div className="adm-two">
+          <label className="adm-field"><span>Embarcação</span><select name="hull" value={draft} onChange={e => setHull(e.target.value)}>{HULLS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+          {(draft === 'cat' || draft === 'mono') && <label className="adm-field"><span>Motores</span><select name="motors" defaultValue={String(motors)}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>}
+        </div>
+        {draft !== (team.boat_hull ?? 'cat') && (draft === 'jetski' || draft === 'support') && <p className="adm-hint">Continua no mapa ao vivo, mas sai da classificação e da escalação do app.</p>}
+        <button className="adm-button primary adm-wide" disabled={busy}>{busy ? 'Salvando…' : 'Salvar aparência'}</button>
+      </form>}
+    </li>;
+  };
+  const competitors = teams.filter(t => !isCraft(t)), craft = teams.filter(isCraft);
   return <div className="adm-stack">
     <p className="adm-hint">As equipes do Desafio Solar. Toque em um barco para mudar como ele aparece no mapa.</p>
-    <ul className="adm-card adm-list">
-      {teams.map(team => <li key={team.id}>
-        <button className="adm-row" aria-expanded={editing === team.id} onClick={() => setEditing(editing === team.id ? null : team.id)}>
-          <TeamBadge team={team} />
-          <span className="adm-row-main"><strong>{team.name}</strong><small>{team.boat_hull === 'mono' ? 'Monocasco' : 'Catamarã'} · {team.boat_motors ?? 1} {(team.boat_motors ?? 1) > 1 ? 'motores' : 'motor'}</small></span>
-          <span className="adm-swatch" style={{background: colorOf(team.color)}} aria-label={COLORS.find(c => c[0] === team.color)?.[1]} />
-        </button>
-        {editing === team.id && <form className="adm-edit" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'style', teamId: team.id, color: form.get('color'), hull: form.get('hull'), motors: Number(form.get('motors'))}, `${team.name} atualizado no mapa.`); }}>
-          <fieldset className="adm-colors"><legend>Cor no mapa</legend>
-            {COLORS.map(([id, label, hex]) => <label key={id} title={label}><input type="radio" name="color" value={id} defaultChecked={(team.color ?? 'blue') === id} /><span style={{background: hex}} /></label>)}
-          </fieldset>
-          <div className="adm-two">
-            <label className="adm-field"><span>Casco</span><select name="hull" defaultValue={team.boat_hull ?? 'cat'}><option value="cat">Catamarã</option><option value="mono">Monocasco</option></select></label>
-            <label className="adm-field"><span>Motores</span><select name="motors" defaultValue={String(team.boat_motors ?? 1)}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
-          </div>
-          <button className="adm-button primary adm-wide" disabled={busy}>{busy ? 'Salvando…' : 'Salvar aparência'}</button>
-        </form>}
-      </li>)}
-    </ul>
-    {adding ? <form className="adm-card adm-pad adm-form" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'createBoat', name: form.get('name'), initials: form.get('initials')}, 'Barco cadastrado.').then(() => setAdding(false)); }}>
+    <ul className="adm-card adm-list">{competitors.map(row)}</ul>
+    {craft.length > 0 && <><h3 className="adm-section">Resgate e apoio <small>{craft.length}</small></h3><ul className="adm-card adm-list">{craft.map(row)}</ul></>}
+    {adding ? <form className="adm-card adm-pad adm-form" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'createBoat', name: form.get('name'), initials: form.get('initials'), hull: form.get('hull')}, 'Barco cadastrado.').then(() => setAdding(false)); }}>
       <h3>Novo barco</h3>
       <div className="adm-two">
         <label className="adm-field"><span>Nome</span><input name="name" placeholder="Nome da equipe" maxLength={60} required autoFocus /></label>
         <label className="adm-field adm-narrow"><span>Sigla</span><input name="initials" placeholder="SOL" maxLength={3} required /></label>
       </div>
+      <label className="adm-field"><span>Embarcação</span><select name="hull" defaultValue="cat"><option value="cat">Barco competidor</option><option value="jetski">Jet ski de resgate</option><option value="support">Barco de apoio</option></select></label>
       <div className="adm-dialog-actions"><button type="button" className="adm-button" onClick={() => setAdding(false)}>Cancelar</button><button className="adm-button primary" disabled={busy}>Cadastrar</button></div>
     </form> : <button className="adm-button adm-wide" onClick={() => setAdding(true)}>＋ Cadastrar barco</button>}
   </div>;
@@ -235,7 +249,8 @@ function DevicesTab({teams, devices, team, busy, confirm}: {teams: Team[]; devic
     }}>
       <h3>Vincular aparelho a um barco</h3>
       <div className="adm-two adm-two--wide">
-        <label className="adm-field"><span>Barco</span><select name="teamId" required value={teamId} onChange={e => setTeamId(e.target.value)}><option value="" disabled>Selecione o barco</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+        <label className="adm-field"><span>Barco</span><select name="teamId" required value={teamId} onChange={e => setTeamId(e.target.value)}><option value="" disabled>Selecione o barco</option>{teams.filter(t => !isCraft(t)).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          {teams.some(isCraft) && <optgroup label="Resgate e apoio">{teams.filter(isCraft).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>}</select></label>
         <label className="adm-field"><span>Código mostrado no celular</span><input name="code" placeholder="838AA42633" maxLength={11} autoComplete="off" required className="adm-code" /></label>
       </div>
       {current && <p className="adm-hint">{team(teamId)?.name} usa hoje o aparelho <code>{current.display_code}</code>. Ele será trocado pelo novo.</p>}

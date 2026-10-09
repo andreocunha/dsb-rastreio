@@ -1,5 +1,11 @@
 import { ApiError, database, operator, sameOrigin, body, json, failure } from '@/lib/tracker/server';
 
+// Competitors are catamarans or monohulls; the rescue jet ski and the support boat are tracked
+// like any boat but stay out of the competition (team_standings leaves them out).
+const HULLS=['cat','mono','jetski','support'];
+// Before the support-craft migration the database only takes 'cat' and 'mono'.
+const missingMigration=(code?:string)=>code==='42703'||code==='PGRST204'||code==='23514';
+
 type Database=ReturnType<typeof database>;
 /** Deletes a tracker phone. The boat keeps its trips, positions and SOS history: only the link to this phone goes. */
 async function deleteDevice(db:Database,id:string) {
@@ -70,17 +76,18 @@ export async function POST(request:Request) {
       }
       return json({ok:true,deleted,kept});
     } else if(input.action==='createBoat') {
-      const name=String(input.name??'').trim(); const initials=String(input.initials??'').trim().toUpperCase();
+      const name=String(input.name??'').trim(); const initials=String(input.initials??'').trim().toUpperCase(); const hull=String(input.hull??'cat');
       if(name.length<2 || name.length>60 || !/^[A-Z0-9À-Ÿ]{1,3}$/.test(initials)) throw new ApiError(400,'Informe nome e sigla de até 3 caracteres.');
+      if(!HULLS.includes(hull)) throw new ApiError(400,'Tipo de embarcação inválido.');
       const id=`trk-${crypto.randomUUID().replaceAll('-','')}`;
-      const result=await db.from('teams').insert({id,name,initials,color:'blue',university:''});
-      if(result.error) throw new ApiError(400,'Não foi possível cadastrar o barco.');
+      const result=await db.from('teams').insert({id,name,initials,color:'blue',university:'',...(hull==='cat'?{}:{boat_hull:hull})});
+      if(result.error) throw new ApiError(missingMigration(result.error.code)?503:400,missingMigration(result.error.code)?'Aplique a migração de embarcações de apoio no banco.':'Não foi possível cadastrar o barco.');
     } else if(input.action==='style') {
       // Map appearance only: colour, hull form and outboard count.
       const teamId=String(input.teamId??''),color=String(input.color??''),hull=String(input.hull??''),motors=Number(input.motors);
-      if(!teamId || teamId.length>100 || !['green','gold','blue','orange','purple','cyan'].includes(color) || !['cat','mono'].includes(hull) || ![1,2,3].includes(motors)) throw new ApiError(400,'Aparência inválida.');
+      if(!teamId || teamId.length>100 || !['green','gold','blue','orange','purple','cyan'].includes(color) || !HULLS.includes(hull) || ![1,2,3].includes(motors)) throw new ApiError(400,'Aparência inválida.');
       const result=await db.from('teams').update({color,boat_hull:hull,boat_motors:motors}).eq('id',teamId).select('id').single();
-      if(result.error) throw new ApiError(result.error.code==='42703'||result.error.code==='PGRST204'?503:400,result.error.code==='42703'||result.error.code==='PGRST204'?'Aplique a migração de aparência dos barcos no banco.':'Não foi possível salvar a aparência.');
+      if(result.error) throw new ApiError(missingMigration(result.error.code)?503:400,missingMigration(result.error.code)?'Aplique a migração de embarcações de apoio no banco.':'Não foi possível salvar a aparência.');
     } else if(input.action==='sos') {
       if(!['acknowledged','resolved'].includes(input.status) || typeof input.id!=='string') throw new ApiError(400,'Estado de SOS inválido.');
       const patch=input.status==='acknowledged' ? {status:input.status,acknowledged_at:new Date().toISOString()} : {status:input.status,resolved_at:new Date().toISOString()};

@@ -61,7 +61,7 @@ export interface EngineCallbacks {
   onView?: (heading: number | null, tilted: boolean) => void;
 }
 
-export interface LiveBoat { id: string; label: string; color: string; hull?: 'cat' | 'mono'; motors?: number; logo?: string; lat: number; lon: number; speed: number | null; heading: number | null; capturedAt: string; }
+export interface LiveBoat { id: string; label: string; color: string; hull?: 'cat' | 'mono' | 'jetski' | 'support'; motors?: number; logo?: string; lat: number; lon: number; speed: number | null; heading: number | null; capturedAt: string; }
 export interface EngineAPI {
   set3D: (canvas:HTMLCanvasElement|null) => Promise<boolean>;
   setLighting: (mode:LightMode) => void;

@@ -194,8 +194,9 @@ export default function MapCanvas() {
     // Motion is interpolated from each fix's own timestamp, so a 200 ms batch is invisible.
     let batch:ReturnType<typeof setTimeout>|undefined;
     const queueUpdate=()=>{batch??=setTimeout(()=>{batch=undefined;if(!disposed)update();},200);};
-    // Optional boat style from the organization: "cat:2" or "mono:1".
-    const style=(value?:string)=>{const [hull,motors]=(value??'').split(':');return {hull:hull==='mono'?'mono' as const:'cat' as const,motors:Math.min(3,Math.max(1,Number(motors)||1))};};
+    // Optional boat style from the organization: "cat:2", "mono:1", or a rescue/support craft ("jetski:1", "support:1").
+    const hulls=['cat','mono','jetski','support'] as const;
+    const style=(value?:string)=>{const [hull,motors]=(value??'').split(':');return {hull:hulls.find(h=>h===hull) ?? 'cat',motors:Math.min(3,Math.max(1,Number(motors)||1))};};
     function decode(row:[string,string,string,number,number,number|null,number|null,number,string?,string?]):LiveBoat {
       return {id:row[0],label:row[1],color:row[2],...style(row[8]),logo:row[9]||undefined,lat:row[3]/1e7,lon:row[4]/1e7,speed:row[5]===null?null:row[5]/100*1.943844,heading:row[6],capturedAt:new Date(row[7]).toISOString()};
     }
