@@ -10,6 +10,7 @@ import { LabelLayout, drawLabels } from './labels';
 import { refreshPeriod } from './pacing';
 import { attachInputHandlers } from './input';
 import { DEFAULT_CONFIG, ROUTE_COLORS } from './types';
+import { teamColor } from './team-colors';
 import { readCachedCourse, cacheCourse } from './storage';
 import type { CourseGeometry, EventAreas, LiveCourse } from './course-data';
 import { COURSE_PRESETS, copyCourse, defaultCourse, MAINTENANCE_AREA, WAITING_AREA, type Course } from './courses';
@@ -686,7 +687,6 @@ export function initEngine(
     },
     setLiveBoats(updates) {
       if (!live) return;
-      const palette: Record<string,string> = {blue:'#2f86ff',purple:'#a371ff',green:'#7bd63a',orange:'#ff7a1f',red:'#ff4d4f',yellow:'#ffc629',gold:'#ffc629',cyan:'#41d6f5'};
       const now=performance.now();
       state.boats = updates.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat)<85 && Math.abs(p.lon)<=180).map(p => {
         const old = state.boats.find(b => b.id === p.id);
@@ -700,7 +700,7 @@ export function initEngine(
         const trail = old && continuous ? [...old.trail] : [];
         if (old && continuous && old.capturedAt !== p.capturedAt) trail.push([old.lat,old.lon]);
         return {id:p.id,label:p.label,lat:pose.lat,lon:pose.lon,capturedAt:p.capturedAt,
-          type:p.hull ?? 'cat',motors:p.motors ?? 1,logo:logoUrl(p.logo),activity:'racing',raceRouteId:null,hullColor:'#ffffff',accentColor:palette[p.color] || palette.blue,
+          type:p.hull ?? 'cat',motors:p.motors ?? 1,logo:logoUrl(p.logo),activity:'racing',raceRouteId:null,hullColor:'#ffffff',accentColor:teamColor(p.color),
           heading:pose.heading,headingTarget:p.heading ?? old?.heading ?? 0,
           speed:isRecentPosition(p.capturedAt) ? (p.speed ?? 0) : 0,speedKnown:p.speed!==null,
           baseSpeed:0,speedPhaseOffset:0,routeIndex:0,routeT:0,trail:trail.slice(-config.maxTrailLength)};

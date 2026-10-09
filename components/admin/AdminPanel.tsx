@@ -1,19 +1,20 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { adminFetch, hasAdminSession, insideApp, loginWithApp, loginWithPassword, logout } from '@/lib/tracker/admin-session';
+import { TEAM_COLORS, teamColor } from '@/lib/map/team-colors';
 import { logoUrl } from '@/lib/map/logos';
 import { positionAge } from '@/lib/tracker/freshness';
 import './admin.css';
 
-type Team = {id: string; name: string; initials: string; color?: string; logo?: string | null; boat_hull?: string; boat_motors?: number};
+type Team = {id: string; name: string; initials: string; color?: string; map_color?: string | null; logo?: string | null; boat_hull?: string; boat_motors?: number};
 type Device = {id: string; display_code: string; team_id: string | null; enabled: boolean; created_at: string; last_seen_at: string | null};
 type Alert = {id: string; team_id: string; status: string; received_at: string};
-type Overview = {teams: Team[]; devices: Device[]; alerts: Alert[]};
+type Overview = {teams: Team[]; devices: Device[]; alerts: Alert[]; onTrip?: string[]};
 type Tab = 'course' | 'boats' | 'devices' | 'sos';
 type Confirm = {title: string; message: string; action: string; danger?: boolean; input: Record<string, unknown>};
 
-const COLORS: [string, string, string][] = [['blue', 'Azul', '#2f86ff'], ['green', 'Verde-limão', '#7bd63a'], ['gold', 'Amarelo', '#ffc629'], ['orange', 'Laranja', '#ff7a1f'], ['purple', 'Roxo', '#a371ff'], ['cyan', 'Ciano', '#41d6f5']];
-const colorOf = (id?: string) => COLORS.find(c => c[0] === id)?.[2] ?? '#2f86ff';
+/** Map colour of a team: its own, or the DSB app's badge colour until one is picked. */
+const colorOf = (team?: Team) => teamColor(team?.map_color ?? team?.color);
 const HULLS: [string, string][] = [['cat', 'Catamarã'], ['mono', 'Monocasco'], ['jetski', 'Jet ski de resgate'], ['support', 'Barco de apoio']];
 /** Rescue jet ski and support boat: tracked on the map, but not competitors. */
 const isCraft = (team?: Team) => team?.boat_hull === 'jetski' || team?.boat_hull === 'support';
@@ -34,7 +35,7 @@ export interface CourseControls {
 
 function TeamBadge({team, size = 40}: {team?: Team; size?: number}) {
   const logo = logoUrl(team?.logo);
-  return <span className="adm-badge" style={{width: size, height: size, '--team': colorOf(team?.color)} as React.CSSProperties}>
+  return <span className="adm-badge" style={{width: size, height: size, '--team': colorOf(team)} as React.CSSProperties}>
     {/* Small remote team logos: no next/image optimisation needed. */}
     {/* eslint-disable-next-line @next/next/no-img-element */}
     {logo ? <img src={logo} alt="" loading="lazy" /> : <b>{team?.initials ?? '—'}</b>}
@@ -125,7 +126,7 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
       {!data ? <p className="adm-note">Carregando…</p>
         : tab === 'course' && course ? <CourseTab course={course} />
         : tab === 'boats' ? <BoatsTab teams={teams} editing={editingTeam} setEditing={setEditingTeam} busy={busy} mutate={mutate} />
-        : tab === 'devices' ? <DevicesTab teams={teams} devices={data.devices} team={team} busy={busy} confirm={setConfirm} />
+        : tab === 'devices' ? <DevicesTab teams={teams} devices={data.devices} onTrip={new Set(data.onTrip ?? [])} team={team} busy={busy} confirm={setConfirm} />
         : <SosTab alerts={data.alerts} team={team} busy={busy} confirm={setConfirm} />}
     </>;
 
@@ -180,11 +181,15 @@ function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; ed
       <button className="adm-row" aria-expanded={editing === team.id} onClick={() => open(editing === team.id ? null : team.id)}>
         <TeamBadge team={team} />
         <span className="adm-row-main"><strong>{team.name}</strong><small>{hullLabel(team)}{isCraft(team) ? '' : ` · ${motors} ${motors > 1 ? 'motores' : 'motor'}`}</small></span>
-        <span className="adm-swatch" style={{background: colorOf(team.color)}} aria-label={COLORS.find(c => c[0] === team.color)?.[1]} />
+        <span className="adm-swatch" style={{background: colorOf(team)}} aria-label={TEAM_COLORS.find(c => c.hex === colorOf(team))?.label} />
       </button>
       {editing === team.id && <form className="adm-edit" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'style', teamId: team.id, color: form.get('color'), hull: form.get('hull'), motors: Number(form.get('motors') ?? motors)}, `${team.name} atualizado no mapa.`); }}>
         <fieldset className="adm-colors"><legend>Cor no mapa</legend>
-          {COLORS.map(([id, label, hex]) => <label key={id} title={label}><input type="radio" name="color" value={id} defaultChecked={(team.color ?? 'blue') === id} /><span style={{background: hex}} /></label>)}
+          {TEAM_COLORS.map(({hex, label}) => {
+            // Colours already on another boat are marked, so each boat can keep its own.
+            const taken = teams.filter(t => t.id !== team.id && colorOf(t) === hex).map(t => t.name);
+            return <label key={hex} title={taken.length ? `${label} · já usada por ${taken.join(', ')}` : label} className={taken.length ? 'taken' : undefined}><input type="radio" name="color" value={hex} defaultChecked={colorOf(team) === hex} /><span style={{background: hex}} /></label>;
+          })}
         </fieldset>
         <div className="adm-two">
           <label className="adm-field"><span>Embarcação</span><select name="hull" value={draft} onChange={e => setHull(e.target.value)}>{HULLS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
@@ -212,7 +217,7 @@ function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; ed
   </div>;
 }
 
-function DevicesTab({teams, devices, team, busy, confirm}: {teams: Team[]; devices: Device[]; team: (id: string | null) => Team | undefined; busy: boolean; confirm: (c: Confirm) => void}) {
+function DevicesTab({teams, devices, onTrip, team, busy, confirm}: {teams: Team[]; devices: Device[]; onTrip: Set<string>; team: (id: string | null) => Team | undefined; busy: boolean; confirm: (c: Confirm) => void}) {
   const [teamId, setTeamId] = useState('');
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const inUse = devices.filter(d => d.enabled && d.team_id).sort((a, b) => (team(a.team_id)?.name ?? '').localeCompare(team(b.team_id)?.name ?? '', 'pt-BR'));
@@ -235,8 +240,9 @@ function DevicesTab({teams, devices, team, busy, confirm}: {teams: Team[]; devic
       <label className="adm-check" aria-label={`Selecionar aparelho ${device.display_code}`}><input type="checkbox" checked={chosen.has(device.id)} onChange={() => toggle(device.id)} /></label>
       <TeamBadge team={owner} size={36} />
       <span className="adm-row-main"><strong>{owner?.name ?? 'Sem barco'}</strong><small><code>{device.display_code}</code> · {seen}</small></span>
-      <span className={`adm-tag ${device.enabled ? 'on' : ''}`}>{device.enabled ? 'Em uso' : 'Desativado'}</span>
+      <span className={`adm-tag ${device.enabled ? 'on' : ''}`}>{onTrip.has(device.id) ? 'Em viagem' : device.enabled ? 'Em uso' : 'Desativado'}</span>
       <span className="adm-row-actions">
+        {onTrip.has(device.id) && <button className="adm-button small" disabled={busy} onClick={() => confirm({title: 'Encerrar viagem?', message: `${owner?.name ?? 'O barco'} sai do mapa ao vivo e o trajeto fica guardado no histórico. Desligue o tracker antes: se ele continuar enviando posições, uma nova viagem começa sozinha.`, action: 'Encerrar viagem', input: {action: 'endTrip', id: device.id}})}>Encerrar viagem</button>}
         {device.enabled && <button className="adm-button small" disabled={busy} onClick={() => confirm({title: 'Desativar aparelho?', message: `O aparelho ${device.display_code} deixa de enviar posições${owner ? ` de ${owner.name}` : ''}.`, action: 'Desativar', input: {action: 'disable', id: device.id}})}>Desativar</button>}
         <button className="adm-icon danger" disabled={busy} aria-label={`Apagar aparelho ${device.display_code}`} onClick={() => confirm({title: 'Apagar aparelho?', message: `O aparelho ${device.display_code} sai da lista.${owner ? ` O histórico de ${owner.name} continua guardado.` : ''}`, action: 'Apagar', danger: true, input: {action: 'delete', id: device.id}})}>🗑</button>
       </span>

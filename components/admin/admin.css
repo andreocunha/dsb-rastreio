@@ -102,12 +102,13 @@ button.adm-row:hover { background: var(--surface-hover); }
 @media (max-width: 420px) { .adm-device .adm-tag { display: none; } }
 
 .adm-edit { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 14px; }
-.adm-colors { display: flex; gap: 8px; margin: 0; padding: 0; border: 0; }
+.adm-colors { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; border: 0; }
 .adm-colors legend { margin-bottom: 8px; color: var(--text-secondary); font-size: 13px; }
 .adm-colors label { cursor: pointer; }
 .adm-colors input { position: absolute; opacity: 0; pointer-events: none; }
 .adm-colors span { display: block; width: 32px; height: 32px; border-radius: 50%; box-shadow: 0 0 0 2px #fff, 0 0 0 3px var(--border-strong); }
 .adm-colors input:checked + span { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--brand); }
+.adm-colors label.taken span { opacity: .35; }
 .adm-colors input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 4px; }
 
 .adm-sos { padding: 4px 0 12px; }
