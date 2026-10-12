@@ -20,13 +20,17 @@ export const viewport: Viewport = {
   themeColor: "#edf0e4",
 };
 
+// Runs before the first paint: whoever chose the simplified chart skips the cover the 3D view opens under (.map-cover).
+const viewHint = `try{var v=new URLSearchParams(location.search).get('view');if(v==='simple'||(v!=='3d'&&localStorage.getItem('dsb:map:view')==='simple'))document.documentElement.dataset.mapView='simple'}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{__html: viewHint}} /></head>
       {/* Extensões (ex.: ColorZilla injeta cz-shortcut-listen) alteram o <body> antes da hidratação. */}
       <body suppressHydrationWarning>{children}</body>
     </html>

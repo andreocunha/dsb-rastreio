@@ -12,15 +12,19 @@ export class Imagery {
   private geometry=new T.PlaneGeometry(1,1);
   private key='';
   ready=false;
+  /** Every tile of the current view is on screen at full detail (or will never come). */
+  complete=false;
   visibleCount=0;
   constructor(private tiles:TileCache,private project:ReturnType<typeof projection>,private uniforms:GroundUniforms=groundUniforms()){ }
   update(corners:WorldPoint[],zoom:number){
     const g=imageryGrid(corners,zoom),key=`${g.z}/${g.x0}/${g.x1}/${g.y0}/${g.y1}/${this.tiles.revision}`;
     if(key===this.key)return;this.key=key;
     for(const mesh of this.meshes.values())mesh.visible=false;
+    let missing=0;
     for(let x=g.x0;x<=g.x1;x++)for(let y=g.y0;y<=g.y1;y++){
       const wrapped=((x%g.n)+g.n)%g.n,k=`${g.z}/${wrapped}/${y}`;
       this.tiles.load(k,g.z,wrapped,y);
+      if(!this.tiles.settled(k))missing++;
       let z=g.z,tx=x,ty=y,image=this.tiles.get(k);
       // Existing coarser tiles cover the ground while a new level is loading.
       while(!image&&z>Math.max(0,g.z-4)){
@@ -47,7 +51,7 @@ export class Imagery {
       if(!mesh.visible){this.root.remove(mesh);mesh.material.uniforms.map.value?.dispose();mesh.material.dispose();this.meshes.delete(id);}
     }
     this.visibleCount=[...this.meshes.values()].filter(m=>m.visible).length;
-    this.ready=this.visibleCount>0;
+    this.ready=this.visibleCount>0;this.complete=missing===0;
   }
   dispose(){for(const mesh of this.meshes.values()){mesh.material.uniforms.map.value?.dispose();mesh.material.dispose();}this.geometry.dispose();this.meshes.clear();this.root.clear();}
 }

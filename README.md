@@ -3,8 +3,10 @@
 Interface Next.js com mapa simplificado em Canvas 2D e cenário 3D opcional para acompanhar posições reais do DSB Tracker.
 O mapa é sempre público, sem login. A organização entra pelo **painel da organização**:
 
-- **No app DSB (iframe):** o app adiciona `?admin=1` para quem está em `admin_emails` (a
-  mesma lista do painel `/admin` do app) e aparece o botão **Organização** no mapa. O
+- **No app DSB (iframe):** o app avisa o mapa por mensagem (`dsb-tracker:admin`) quando a
+  conta está em `admin_emails` (a mesma lista do painel `/admin` do app) e aparece o botão
+  **Organização** no mapa. O endereço do iframe não muda, para o mapa não recarregar quando
+  a conta termina de carregar (`?admin=1` continua aceito, para versões antigas do app). O
   painel entra sozinho com a conta do app: pede a sessão ao app (`postMessage`), o
   servidor confere o token no Supabase e o e-mail em `admin_emails`. Dentro do iframe a
   sessão vai num cabeçalho `Authorization` (navegadores não enviam o cookie ali).
@@ -44,7 +46,7 @@ The build command generates `public/offline-manifest.js` from the exact Next bui
 ## Dentro do app DSB (iframe) e logos
 
 Quando aberto dentro de outro site (iframe) ou com `?embed=1`, o mapa mostra só o
-essencial para o público (o botão **Organização** só com `?admin=1`, veja acima).
+essencial para o público (o botão **Organização** só para a organização, veja acima).
 No celular, as embarcações ficam numa faixa fina no rodapé (logo, nome e
 velocidade; tocar acompanha o barco) e 3D/horário/camada ficam num único botão.
 As logos vêm de `teams.logo` (nome do arquivo), enviado pelo stream ao vivo, e são

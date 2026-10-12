@@ -460,3 +460,35 @@ test('refresh period is learnt from agreeing frames, not from a lone odd one', (
   assert.ok(near(refreshPeriod([...Array(20).fill(22.2), ...Array(12).fill(11.1), ...Array(8).fill(33.3)], 16.7), 11.1), 'skipped frames do not hide the real period');
   assert.equal(refreshPeriod([8.3, 8.4], 16.7), 16.7, 'too few samples: keep the previous estimate');
 });
+
+test('opening: the chart uncovers on its first frame; the 3D view only once its imagery is in place, or after a bounded wait', async () => {
+  for (const scenario of ['chart', '3d', 'slow']) {
+    let frame, charts = 0, ready = 0, scenes = 0, complete = false;
+    const requested = [];
+    const window = {innerWidth:390,innerHeight:844,addEventListener(){},removeEventListener(){},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}})};
+    const globals = {window,document:{hidden:false,addEventListener(){},removeEventListener(){}},devicePixelRatio:2,localStorage:{getItem(){return null;},setItem(){}},requestAnimationFrame:fn=>{frame=fn;return 1;},cancelAnimationFrame(){},setTimeout:fn=>{frame=fn;return 1;},clearTimeout(){}};
+    class RaceScene { moving=false; halfRate=false; heading=0; tilt=74; get ready(){return complete;} render(){scenes++;} setLighting(){} setPhotographic(){} dispose(){} resetClock(){} }
+    const mocks = {'./renderer':{renderBackground(){},renderFrame:()=>charts++},'./input':{attachInputHandlers:()=>()=>{}},'./three/scene':{RaceScene},
+      './tiles':{TileCache:class {revision=0;load(key){requested.push(key);}destroy(){}}}};
+    const {initEngine} = modules(globals,mocks)('lib/map/engine.ts');
+    const canvas = () => ({width:0,height:0,style:{},getContext:()=>({setTransform(){},clearRect(){}})});
+    const engine = initEngine(canvas(),canvas(),undefined,{onReady:()=>ready++},true);
+    let time = 0; const run = until => { while (time < until) frame(time += 100); };
+    if (scenario === 'chart') {
+      run(300);
+      assert.equal(ready,1,'the simplified chart has nothing to wait for'); assert.ok(charts>0);
+    } else {
+      const loading = engine.set3D({});
+      assert.ok(requested.length>0 && requested.length<=48,'satellite tiles are requested before the 3D code arrives');
+      assert.ok(requested.every(key=>/^\d+\/\d+\/\d+$/.test(key)));
+      run(300);
+      assert.equal(charts,0,'no chart is drawn under the cover'); assert.equal(ready,0);
+      assert.equal(await loading,true);
+      run(1000); assert.ok(scenes>0); assert.equal(ready,0,'bare 3D ground stays covered while the photographs load');
+      if (scenario === '3d') { complete = true; run(1200); assert.equal(ready,1); }
+      else { run(3000); assert.equal(ready,0); run(4000); assert.equal(ready,1,'a slow connection does not hold the map for ever'); }
+    }
+    run(time+1000); assert.equal(ready,1,'uncovered exactly once');
+    engine.destroy();
+  }
+});

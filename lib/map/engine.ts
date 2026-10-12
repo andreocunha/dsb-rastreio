@@ -5,6 +5,7 @@ import { isRecentPosition } from '../tracker/freshness';
 import type { MapState, MapConfig, Buoy, Boat, EditTool, BoatType } from './types';
 import { geoToWorld, geoToScreen, screenToGeo, bearing } from './geo';
 import { TileCache } from './tiles';
+import { imageryGrid, overheadCorners } from './three/imagery-grid';
 import { renderFrame, renderBackground } from './renderer';
 import { LabelLayout, drawLabels } from './labels';
 import { refreshPeriod } from './pacing';
@@ -51,6 +52,8 @@ const BOAT_HIT_RADIUS = 22;
 
 export interface EngineCallbacks {
   on3DFallback?: () => void;
+  /** The opening view is complete on screen (the chart, or the 3D scene with its imagery): the page can uncover the map. */
+  onReady?: () => void;
   onCourseChange?: (id: string, canUndo: boolean) => void;
   onSelectionChange?: (boatId: string | null) => void;
   onFleetUpdate?: (boats: Boat[]) => void;
@@ -196,6 +199,11 @@ export function initEngine(
   const liveMotion = new Map<string,LiveMotion>();
   let view3D:RaceScene|null=null;
   let viewGeneration=0;
+  // Opening: nothing is shown until the first view is whole, so the map appears once instead of
+  // building up on screen (chart, then bare 3D, then the photographs tile by tile).
+  let pending3D=false,revealed=false,sceneSince=0;
+  /** Slow connection: after this long the 3D scene shows with the imagery it has. */
+  const IMAGERY_WAIT=3000;
   let lighting:LightMode='live';
   let photographic=true,demoSpeed=1;
   let tickSimulation = createSimulation(state);
@@ -234,6 +242,14 @@ export function initEngine(
   let buoyIdCounter = Math.max(0, ...state.buoys.map(b => Number(b.id.split('-').pop()) || 0));
   let routeIdCounter = Math.max(0, ...state.routes.map(r => Number(r.id.split('-').pop()) || 0));
   const tiles = new TileCache(config);
+  /** Satellite tiles of the opening 3D view, requested while the 3D code is still downloading. */
+  function preloadImagery() {
+    const g = imageryGrid(overheadCorners(state, config.tileSize), state.zoom);
+    for (let x = g.x0; x <= g.x1; x++) for (let y = g.y0; y <= g.y1; y++) {
+      const wrapped = ((x % g.n) + g.n) % g.n;
+      tiles.load(`${g.z}/${wrapped}/${y}`, g.z, wrapped, y);
+    }
+  }
 
   let rafId = 0;
   let wakeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -608,7 +624,8 @@ export function initEngine(
       if(pose){boat.lat=pose.lat;boat.lon=pose.lon;boat.heading=pose.heading;}
     }
     followCamera();
-    if(!view3D){
+    if(pending3D&&!revealed){/* The 3D view is about to take over: drawing the chart under the cover would only delay it. */}
+    else if(!view3D){
     const key = `${viewportRevision}/${state.width}/${state.height}/${state.zoom}/${state.style}`;
     const scale = 2 ** state.zoom * config.tileSize;
     let offsetX = (backgroundCX - state.worldCX) * scale;
@@ -639,6 +656,10 @@ export function initEngine(
       if(state.editTool){if(overlayHidden){overlayHidden=false;canvas.style.opacity='';}view3D.renderOverlay(ctx,state);}
       else if(!overlayHidden){overlayHidden=true;ctx.clearRect(0,0,state.width,state.height);canvas.style.opacity='0';}
     }
+    if(!revealed&&!pending3D){
+      if(view3D)sceneSince||=time;
+      if(!view3D||view3D.ready||time-sceneSince>IMAGERY_WAIT){revealed=true;callbacks.onReady?.();}
+    }
     callbacks.onView?.(view3D?view3D.heading:null,!!view3D&&(Math.abs(view3D.tilt-(state.followBoatId?63:74))>1||state.pitch!==null));
     if (lastSelection !== state.followBoatId) {
       lastSelection = state.followBoatId;
@@ -666,13 +687,15 @@ export function initEngine(
     async set3D(target) {
       const generation=++viewGeneration;
       view3D?.dispose();view3D=null;previousSceneKey='';backgroundKey='';
-      if(!target)return false;
+      if(!target){pending3D=false;return false;}
+      pending3D=true;
+      if(photographic)preloadImagery();
       try{
         const {RaceScene}=await import('./three/scene');
         if(!running || generation!==viewGeneration)return false;
         view3D=new RaceScene(target,()=>{view3D?.dispose();view3D=null;backgroundKey='';callbacks.on3DFallback?.();},tiles);
-        view3D.setLighting(lighting);view3D.setPhotographic(photographic);wake();return true;
-      }catch{callbacks.on3DFallback?.();return false;}
+        view3D.setLighting(lighting);view3D.setPhotographic(photographic);pending3D=false;sceneSince=0;wake();return true;
+      }catch{if(generation===viewGeneration)pending3D=false;callbacks.on3DFallback?.();return false;}
     },
     setLighting(mode){lighting=mode;view3D?.setLighting(mode);},
     setPhotographic(enabled){photographic=enabled;view3D?.setPhotographic(enabled);},

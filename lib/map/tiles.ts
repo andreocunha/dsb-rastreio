@@ -17,6 +17,8 @@ export class TileCache {
     if (img) { this.cache.delete(key); this.cache.set(key, img); }
     return img;
   }
+  /** Nothing more to wait for: the image arrived, failed, or cannot be requested (offline). */
+  settled(key: string) { return this.cache.has(key) || this.failures.has(key) || !navigator.onLine; }
   load(key: string, z: number, x: number, y: number) {
     if (!this.alive || this.cache.has(key) || this.loading.has(key) || this.queue.has(key) || this.failures.has(key) || !navigator.onLine) return;
     // Keep pending requests bounded while dragging quickly.

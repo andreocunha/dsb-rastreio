@@ -11,12 +11,13 @@ import {courseOverlay} from './course-overlay';
 import {groundMaterial,groundUniforms} from './ground';
 import {projection} from './geography';
 import {Imagery} from './imagery';
+import {FOV} from './imagery-grid';
 import {sceneSun,sceneGrade,blendGrade,type Grade,type LightMode} from './lighting';
 import {waterField,type WaterField} from './water-field';
 import {isRecentPosition} from '../../tracker/freshness';
 import type {TileCache} from '../tiles';
 
-const FOV=30,TRANSITION_MS=1600;
+const TRANSITION_MS=1600;
 
 export const boatStyle=(boat:Boat)=>({type:(['mono','jetski','support'] as const).find(t=>t===boat.type)??'cat' as const,motors:boat.type==='jetski'?1:Math.max(1,Math.min(3,boat.motors??1)),color:boat.accentColor});
 
@@ -307,6 +308,8 @@ export class RaceScene {
     this.rendered.push(time);while(this.rendered.length&&time-this.rendered[0]>1000)this.rendered.shift();
     if(this.frame%30===0){const d=this.canvas.dataset;d.drawCalls=String(calls);d.triangles=String(triangles);d.geometries=String(this.renderer.info.memory.geometries);d.textures=String(this.renderer.info.memory.textures);d.pixelRatio=this.renderer.getPixelRatio().toFixed(2);d.imageryTiles=String(this.imagery!.visibleCount);d.rate=this.halfRate?'half':'full';d.gpuBehind=(this.behind*100).toFixed(0);d.budget=this.budget.state;d.rendered=String(this.rendered.length);}
   }
+  /** A frame is on screen with the whole ground of the view in place (photographs loaded, when they are on). */
+  get ready(){return this.frame>0&&(!this.photographic||!!this.imagery?.complete);}
   /** Smoothed camera heading in degrees, for the compass. */
   get heading(){return this.yaw;}
   get tilt(){return this.pitch;}

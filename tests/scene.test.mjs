@@ -21,9 +21,9 @@ test('imagery tiles align to the exact GPS projection and keep a bounded visible
     const grid=imageryGrid(corners,18);
     assert.ok((grid.x1-grid.x0+1)*(grid.y1-grid.y0+1)<=48);
     const image={},requests=[];
-    const tiles={revision:1,get:()=>image,load:(...a)=>requests.push(a)};
+    const tiles={revision:1,get:()=>image,load:(...a)=>requests.push(a),settled:()=>true};
     const imagery=new Imagery(tiles,p);imagery.update(corners,18);
-    assert.ok(imagery.ready);assert.ok(imagery.root.children.length<=48);
+    assert.ok(imagery.ready);assert.ok(imagery.complete);assert.ok(imagery.root.children.length<=48);
     for(const mesh of imagery.root.children){
       const world=p.world(mesh.position.x,mesh.position.z);
       assert.ok(Math.abs((world.x*grid.n)%1-.5)<1e-8);
@@ -33,6 +33,31 @@ test('imagery tiles align to the exact GPS projection and keep a bounded visible
     const first=requests.length;imagery.update(corners,18);
     assert.equal(requests.length,first,'stationary camera does not repeatedly queue imagery');
     imagery.dispose();
+    // One photograph still on its way: the view is not complete yet, whatever stands in for it.
+    const waiting=new Imagery({...tiles,revision:2,settled:key=>key!==requests[0][0]},p);waiting.update(corners,18);
+    assert.ok(waiting.ready);assert.equal(waiting.complete,false);waiting.dispose();
+  }
+});
+
+test('the opening imagery is predicted for exactly the ground the 3D camera shows',()=>{
+  const {FOV,OVERHEAD_PITCH,overheadCorners}=load('lib/map/three/imagery-grid.ts');
+  const {projection}=load('lib/map/three/geography.ts');
+  const p=projection('imboassica'),tileSize=256;
+  for(const view of [{width:390,height:844,zoom:16.3},{width:1440,height:900,zoom:17},{width:844,height:390,zoom:15.2}]){
+    const state={...view,worldCX:p.origin.x+2e-6,worldCY:p.origin.y-3e-6};
+    // The scene's own camera set-up (scene.ts): overhead tilt, north up, distance from the zoom.
+    const ppm=2**state.zoom*tileSize/p.meters,distance=state.height/ppm/(2*Math.tan(FOV*Math.PI/360)),pitch=OVERHEAD_PITCH*Math.PI/180;
+    const center=new THREE.Vector3((state.worldCX-p.origin.x)*p.meters,0,(state.worldCY-p.origin.y)*p.meters);
+    const camera=new THREE.PerspectiveCamera(FOV,state.width/state.height,1,30000);
+    camera.position.set(center.x,Math.sin(pitch)*distance,center.z+Math.cos(pitch)*distance);camera.lookAt(center);camera.updateMatrixWorld();
+    const ray=new THREE.Raycaster(),ground=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+    const predicted=overheadCorners(state,tileSize);
+    [[-1,1],[1,1],[1,-1],[-1,-1]].forEach(([x,y],i)=>{
+      ray.setFromCamera(new THREE.Vector2(x,y),camera);
+      const hit=ray.ray.intersectPlane(ground,new THREE.Vector3()),world=p.world(hit.x,hit.z);
+      // Within a few centimetres on the ground.
+      assert.ok(Math.abs(world.x-predicted[i].x)*p.meters<.05&&Math.abs(world.y-predicted[i].y)*p.meters<.05,`corner ${i} of ${view.width}x${view.height}`);
+    });
   }
 });
 

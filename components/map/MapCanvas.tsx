@@ -33,11 +33,23 @@ const getMobile = () => window.matchMedia('(max-width: 699px)').matches;
 const serverMobile = () => false;
 const getOnline = () => navigator.onLine;
 const serverOnline = () => true;
+/** 3D is the default; the simplified view stays one tap away and is remembered. */
+function wants3D() {
+  let preference='';try{preference=localStorage.getItem('dsb:map:view')??'';}catch{}
+  const requested=new URLSearchParams(location.search).get('view');
+  return requested==='3d'||(requested!=='simple'&&preference!=='simple');
+}
+// Scripts of the page as it was served (taken before anything loads on demand), to tell a new service worker's build from this one.
+const entryAssets = typeof document==='undefined' ? [] : [...document.querySelectorAll<HTMLScriptElement>('script[src*="/_next/static/"]')].map(script=>new URL(script.src).pathname);
+// The 3D code starts downloading with the page instead of after it has hydrated.
+if(typeof window!=='undefined'&&wants3D())void import('@/lib/map/three/scene').catch(()=>{});
 
 export default function MapCanvas() {
   const threeRef = useRef<HTMLCanvasElement>(null);
   const [view3D,setView3D]=useState(false);
   const [loading3D,setLoading3D]=useState(false);
+  // Covered until the opening view is complete: the map shows up once, already whole.
+  const [ready,setReady]=useState(false);
   const [viewMessage,setViewMessage]=useState('');
   const [photographic,setPhotographic]=useState(true);
   const [demo,setDemo]=useState(false);
@@ -60,7 +72,7 @@ export default function MapCanvas() {
   const [fleet, setFleet] = useState<Boat[]>([]);
   const [style, setStyle] = useState<'chart' | 'satellite'>('chart');
   const [isAdmin, setIsAdmin] = useState(false);
-  // The DSB app adds ?admin=1 for organizers: an "Organização" button opens the panel (signed in with their account).
+  // The DSB app announces organizers (by message; ?admin=1 in older versions): an "Organização" button opens the panel (signed in with their account).
   const [adminInvited, setAdminInvited] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [live, setLive] = useState<{venue: string; course: string} | null>(null);
@@ -104,8 +116,17 @@ export default function MapCanvas() {
       let touched = false, pending = false;
       const touch = () => { touched = true; };
       const reloadWhenHidden = () => { if (pending && document.hidden) location.reload(); };
-      const onNewVersion = () => {
+      // Opened online, the page already comes from the new deployment and the worker is only catching up.
+      const sameBuild = () => new Promise<boolean>(resolve => {
+        const worker = navigator.serviceWorker.controller;
+        if (!worker || !entryAssets.length) { resolve(false); return; }
+        const channel = new MessageChannel(), timer = setTimeout(() => resolve(false), 1500);
+        channel.port1.onmessage = event => { clearTimeout(timer); resolve(event.data === true); };
+        worker.postMessage({type: 'SAME_BUILD?', assets: entryAssets}, [channel.port2]);
+      });
+      const onNewVersion = async () => {
         if (!updating || disposed) return; // first install: this page already runs the current version
+        if (await sameBuild() || disposed) return; // nothing to update: reloading would only blink the map
         if (!touched && performance.now() - openedAt < 15000) location.reload();
         else pending = true;
       };
@@ -145,7 +166,10 @@ export default function MapCanvas() {
     // Inside the DSB app (iframe) spectators get a clean view: no venue or organizer tools.
     let framed=false;try{framed=window.self!==window.top;}catch{framed=true;}
     setEmbed(framed||new URLSearchParams(location.search).get('embed')==='1');
+    let shown=false;
     const engine = initEngine(canvasRef.current, backgroundRef.current, undefined, {
+      // The app that embeds the map holds its own opening screen until this (see dsb-app, Dashboard).
+      onReady:()=>{shown=true;setReady(true);if(framed)window.parent.postMessage({type:'dsb-tracker:ready'},'*');},
       on3DFallback:()=>{setView3D(false);setLoading3D(false);setViewMessage('3D indisponível neste aparelho. Modo simplificado ativo.');},
       onView: (heading, tilted) => {
         // Updated per frame without React renders: rotate the needle, show only when turned or tilted.
@@ -176,8 +200,16 @@ export default function MapCanvas() {
     }, !isDemo,isDemo);
     engineRef.current = engine;
     // O app que embute o mapa avisa quando um bottom sheet cobre a tela (ver dsb-app, Sheet).
-    const onHost=(event:MessageEvent)=>{if(event.source===window.parent&&event.data?.type==='dsb-tracker:covered')engine.setCovered(!!event.data.covered);};
+    const onHost=(event:MessageEvent)=>{
+      if(event.source!==window.parent)return;
+      const type=event.data?.type;
+      if(type==='dsb-tracker:covered')engine.setCovered(!!event.data.covered);
+      // Organizers are announced by message: with it in the address, the map reloaded from scratch once their account loaded.
+      else if(type==='dsb-tracker:admin')setAdminInvited(!!event.data.admin);
+      else if(type==='dsb-tracker:ready?'&&shown)window.parent.postMessage({type:'dsb-tracker:ready'},'*');
+    };
     window.addEventListener('message',onHost);
+    if(framed)window.parent.postMessage({type:'dsb-tracker:hello'},'*');
     const initialVenue=venueById(isDemo?'imboassica':new URLSearchParams(location.search).get('venue') ?? undefined);
     if(initialVenue.id!=='imboassica') {engine.selectVenue(initialVenue.id);setVenueId(initialVenue.id);}
     let disposed=false, source:EventSource|null=null, first=true;
@@ -240,10 +272,7 @@ export default function MapCanvas() {
     document.addEventListener('visibilitychange',visibility);window.addEventListener('online',connect);
     connect();
     if(isDemo){setFeedStatus('Demonstração · Dados fictícios');setFeedTone('demo');engine.setLighting('noon');}
-    let preference='';try{preference=localStorage.getItem('dsb:map:view')??'';}catch{}
-    const requestedView=new URLSearchParams(location.search).get('view');
-    // 3D is the default; the simplified view stays one tap away and is remembered.
-    if(requestedView==='3d'||(requestedView!=='simple'&&preference!=='simple')){
+    if(wants3D()){
       setLoading3D(true);void engine.set3D(threeRef.current).then(ok=>{if(!disposed){setView3D(ok);setLoading3D(false);}});
     }
     // Refresh stale labels locally even when there are no network changes.
@@ -319,7 +348,7 @@ export default function MapCanvas() {
   const isLive = (live?.venue ?? 'imboassica') === venueId && (live?.course ?? COURSE_PRESETS[0].id) === courseId;
 
   return (
-    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
+    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${ready?'':'race-app--loading'} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
       {feedStatus && <div className="tracker-feed" data-tone={feedTone} role="status"><span>{feedStatus}</span></div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
@@ -338,6 +367,7 @@ export default function MapCanvas() {
         <canvas ref={threeRef} className="map-three" aria-hidden="true"/>
         <canvas ref={backgroundRef} className="map-background" aria-hidden="true" />
         <canvas ref={canvasRef} className="map-canvas" aria-label={`Mapa · ${venueById(venueId).name}. Arraste para explorar.`} />
+        <div className="map-cover" aria-hidden="true"/>
       </div>
       <Fleet fleet={fleet} selected={selected} demo={demo} onSelect={selectBoat} onBusy={setUiBusy}/>
 

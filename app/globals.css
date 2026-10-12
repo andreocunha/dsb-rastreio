@@ -155,6 +155,15 @@ a { color: inherit; text-decoration: none; }
 @media(max-width:699px){.demo-controls{top:119px;left:14px;gap:0;padding:3px;max-width:calc(100vw - 28px)}.demo-controls button,.demo-controls select{font-size:11px;padding:8px}.race-app--demo .tracker-feed{top:76px!important}.map-attribution{font-size:7px;max-width:calc(100vw - 16px)}}
 /* While the default 3D view loads, show calm water instead of flashing the 2D chart. */
 .race-app--preparing .map-background,.race-app--preparing .map-canvas{visibility:hidden}.race-app--preparing .map-stage{background:#0d2f33}
+/* Opening: one calm surface until the first view is whole (the 3D scene with its imagery), then a single fade. */
+.map-cover{position:absolute;inset:0;background:#0d2f33;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .3s ease-out,visibility 0s .3s}
+.race-app--loading .map-cover{opacity:1;visibility:visible;transition:none}
+/* The simplified chart draws at once: nothing to wait for (set before the first paint, see layout.tsx). */
+html[data-map-view=simple] .map-cover{display:none}
+/* Only a load that drags on gets a sign of life. */
+.race-app--loading .map-cover::after{content:'';position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px;border:2px solid #ffffff26;border-top-color:#ffffffa6;border-radius:50%;animation:cover-spin .9s linear infinite,feed-appear .3s ease-out .8s both}
+@keyframes cover-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.map-cover{transition:none}.race-app--loading .map-cover::after{animation:feed-appear .3s ease-out .8s both}}
 .map-compass svg{transform:rotate(var(--heading,0deg))}.map-compass[hidden]{display:none}
 
 /* ── Fleet: slim strip on phones, compact list on larger screens ── */
@@ -239,6 +248,6 @@ a { color: inherit; text-decoration: none; }
 }
 @media (max-width: 699px) { .race-app:not(.race-app--demo):not(.race-app--embed) .demo-controls { top: 146px; } .race-app--embed:not(.race-app--demo) .demo-controls { top: 58px; } }
 .publish-row{margin-top:12px}.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#1d7a55;background:#e3f3ea;padding:7px 10px;border-radius:999px}.publish-button{width:100%;padding:11px 12px;border-radius:10px;background:#1f4d42;color:#fffbe9;font:700 12px system-ui,sans-serif}.publish-button:hover{background:#286853}
-/* Organizers only (the DSB app adds ?admin=1, or an organizer session exists): opens the panel. */
+/* Organizers only (announced by the DSB app or by ?admin=1, or an organizer session exists): opens the panel. */
 .map-tool.map-admin { color: #422378; }
 .map-tool.map-admin[aria-expanded=true] { background: #422378; color: #fff; }

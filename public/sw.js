@@ -6,6 +6,12 @@ const ASSETS = new Set(self.DSB_ASSETS);
 const TILE_LIMIT = 120;
 /** How long opening the site waits for the network before using the installed copy. */
 const NAVIGATION_TIMEOUT = 2500;
+/**
+ * How long a map page may take to say it updates by itself before it is treated as a legacy one and
+ * reloaded. Generous: this worker takes over while the page is busiest (3D code, shaders, imagery),
+ * and with 1.5 s a current page on a slow start was reloaded in the middle of opening.
+ */
+const LEGACY_PAGE_WAIT = 10000;
 
 self.addEventListener('install', event => {
   // Installation is atomic: an offline-ready shell always includes its exact JS/CSS build.
@@ -45,7 +51,7 @@ async function reloadLegacyPages() {
   await Promise.all(pages.map(async client => {
     const channel = new MessageChannel();
     const current = await new Promise(resolve => {
-      const timer = setTimeout(() => resolve(false), 1500);
+      const timer = setTimeout(() => resolve(false), LEGACY_PAGE_WAIT);
       channel.port1.onmessage = () => { clearTimeout(timer); resolve(true); };
       try { client.postMessage({type: 'AUTO_UPDATE?'}, [channel.port2]); } catch { clearTimeout(timer); resolve(false); }
     });
@@ -55,6 +61,11 @@ async function reloadLegacyPages() {
 }
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  // A page that opened online already runs this build: it asks before reloading for nothing.
+  if (event.data?.type === 'SAME_BUILD?') {
+    const assets = event.data.assets;
+    event.ports[0]?.postMessage(Array.isArray(assets) && assets.length > 0 && assets.every(path => ASSETS.has(path)));
+  }
   if (event.data?.type === 'CHECK_OFFLINE') {
     event.waitUntil((async () => {
       const cache = await caches.open(SHELL);

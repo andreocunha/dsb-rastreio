@@ -4,7 +4,8 @@ import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 const source = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
 
-function harness({failInstall = false, offline = false} = {}) {
+/** @param clock speeds the worker's timers up, for waits too long to sit through in a test */
+function harness({failInstall = false, offline = false, clock = 1} = {}) {
   const listeners = {}, stores = new Map(), network = [], messages = [];
   const key = request => typeof request === 'string' ? new URL(request, 'https://race.test').href : request.url;
   const caches = {
@@ -24,7 +25,7 @@ function harness({failInstall = false, offline = false} = {}) {
   };
   const self = { DSB_BUILD: 'test', DSB_ASSETS: ['/', '/_next/static/app.js', '/_next/static/app.css'], location: {origin: 'https://race.test'}, clients: {claim: async () => {}, matchAll: async () => self.windows ?? []}, skipWaiting: async () => { self.skipped = (self.skipped || 0) + 1; }, addEventListener: (type, fn) => {listeners[type] = fn;} };
   class LocalRequest extends Request { constructor(input, options) { super(typeof input === 'string' ? new URL(input, self.location.origin) : input, options); } }
-  vm.runInNewContext(source, {self, caches, importScripts() {}, setTimeout, clearTimeout, MessageChannel, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
+  vm.runInNewContext(source, {self, caches, importScripts() {}, setTimeout: (fn, ms) => setTimeout(fn, ms / clock), clearTimeout, MessageChannel, Request: LocalRequest, Response, URL, fetch: async request => {network.push(key(request)); if (offline) throw Error('offline'); return new Response('network');}});
   async function event(type, rest = {}) {
     const jobs = []; let response;
     listeners[type]({waitUntil: promise => jobs.push(promise), respondWith: promise => {response = promise;}, source: {postMessage: message => messages.push(message)}, ...rest});
@@ -104,10 +105,21 @@ test('updates apply by themselves: a new build activates once installed, and ope
 });
 
 test('pages from before automatic updates are reloaded once the new worker takes over; current ones and the admin are left alone', async () => {
-  const h = harness(), reloaded = [];
+  const h = harness({clock: 50}), reloaded = [];
   const page = (url, answers) => ({url, postMessage(message, [port]) { if (answers && message.type === 'AUTO_UPDATE?') port.postMessage('yes'); }, async navigate(to) { reloaded.push(to); }});
   h.self.windows = [page('https://race.test/?demo=1', false), page('https://race.test/', true), page('https://race.test/admin', false)];
   await h.event('activate');
-  await new Promise(resolve => setTimeout(resolve, 1700)); // pages that stay silent are given 1.5 s
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(reloaded, [], 'a page busy opening is not mistaken for a legacy one');
+  await new Promise(resolve => setTimeout(resolve, 200)); // pages that stay silent are given 10 s (200 ms on this clock)
   assert.deepEqual(reloaded, ['https://race.test/?demo=1'], 'only the stuck legacy map page');
+});
+
+test('a page that already runs the new build is told so, and is not reloaded for nothing', async () => {
+  const h = harness();
+  const ask = async assets => { let answer; await h.event('message', {data: {type: 'SAME_BUILD?', assets}, ports: [{postMessage: value => { answer = value; }}]}); return answer; };
+  assert.equal(await ask(['/_next/static/app.js']), true);
+  assert.equal(await ask(['/_next/static/app.js', '/_next/static/older.js']), false, 'a script of another build: the page must update');
+  assert.equal(await ask([]), false);
+  assert.equal(await ask(undefined), false);
 });
