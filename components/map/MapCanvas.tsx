@@ -68,6 +68,7 @@ export default function MapCanvas() {
   const [viewMenu, setViewMenu] = useState(false);
   const [feedStatus, setFeedStatus] = useState('Conectando…');
   const [feedTone, setFeedTone] = useState<'live' | 'stale' | 'wait' | 'demo'>('wait');
+  const [viewers, setViewers] = useState<number | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [fleet, setFleet] = useState<Boat[]>([]);
   const [style, setStyle] = useState<'chart' | 'satellite'>('chart');
@@ -261,8 +262,9 @@ export default function MapCanvas() {
         engine.applyLiveCourse(course);setLive({venue:course.venue,course:course.course});
       });
       source.addEventListener('health',event=>{healthy=JSON.parse(event.data).ok===true;update();});
+      source.addEventListener('viewers',event=>{const n=JSON.parse(event.data).n;setViewers(Number.isInteger(n)&&n>0?n:null);});
       source.onerror=()=>{
-        source?.close();phase='disconnected';healthy=false;update();
+        source?.close();phase='disconnected';healthy=false;setViewers(null);update();
         // Jitter and a bounded backoff prevent a reconnect storm after an outage.
         const delay=Math.min(30000,1000*2**Math.min(failures++,5))+Math.random()*1000;
         clearTimeout(reconnect);reconnect=setTimeout(connect,delay);
@@ -349,7 +351,7 @@ export default function MapCanvas() {
 
   return (
     <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${ready?'':'race-app--loading'} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
-      {feedStatus && <div className="tracker-feed" data-tone={feedTone} role="status"><span>{feedStatus}</span></div>}
+      {feedStatus && <div className="tracker-feed" data-tone={feedTone}><span role="status">{feedStatus}</span>{viewers!==null && <span className="tracker-viewers" role="img" aria-label={`${viewers} ${viewers===1?'pessoa':'pessoas'} assistindo agora`} title={`${viewers} ${viewers===1?'pessoa':'pessoas'} assistindo agora`}><Icon name="eye" size={13}/>{viewers}</span>}</div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
         <><button onClick={pauseDemo}>{demoPaused?'▶ Continuar':'Ⅱ Pausar'}</button><select aria-label="Velocidade da demonstração" value={demoSpeed} onChange={e=>{const speed=Number(e.target.value);setDemoSpeed(speed);engineRef.current?.setDemoSpeed(speed);}}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select><button onClick={()=>openDemo(false)}>Voltar ao vivo</button></>

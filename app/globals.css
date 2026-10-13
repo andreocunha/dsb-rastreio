@@ -113,6 +113,8 @@ a { color: inherit; text-decoration: none; }
 .tracker-feed::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:#2fae72;box-shadow:0 0 0 3px rgba(47,174,114,.16)}
 /* Always one line: the dot never wraps away and long text ends in an ellipsis. */
 .tracker-feed span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* How many people are watching right now: never shortened, the status text gives way first. */
+.tracker-feed .tracker-viewers{flex:none;display:inline-flex;align-items:center;gap:4px;overflow:visible;padding-left:8px;border-left:1px solid rgba(31,77,66,.16);font-variant-numeric:tabular-nums}
 .tracker-feed[data-tone=stale]::before{background:#d9932b;box-shadow:0 0 0 3px rgba(217,147,43,.16)}
 .tracker-feed[data-tone=wait]::before{background:#93a39b;box-shadow:none;animation:feed-wait 1.4s ease-in-out infinite}
 .tracker-feed[data-tone=demo]::before{background:#d9932b;box-shadow:none}

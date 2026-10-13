@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
-type Name = 'sun' | 'waves' | 'layers' | 'target' | 'plus' | 'minus' | 'chevron' | 'close' | 'settings' | 'boat' | 'pause' | 'play' | 'check' | 'offline' | 'buoy' | 'route' | 'flag' | 'tool' | 'arrow' | 'shield' | 'info';
+type Name = 'sun' | 'waves' | 'layers' | 'target' | 'plus' | 'minus' | 'chevron' | 'close' | 'settings' | 'boat' | 'pause' | 'play' | 'check' | 'offline' | 'buoy' | 'route' | 'flag' | 'tool' | 'arrow' | 'shield' | 'info' | 'eye';
 const paths: Record<Name, React.ReactNode> = {
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></>,
+  eye: <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></>,
   sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></>,
   waves: <path d="M2 8c3-5 5 5 10 0s7 4 10 0M2 14c3-5 5 5 10 0s7 4 10 0M2 20c3-5 5 5 10 0s7 4 10 0"/>,
   layers: <><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></>,
