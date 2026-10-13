@@ -64,6 +64,8 @@
 .adm-button:hover { background: var(--surface-hover) !important; }
 .adm-button.primary { border-color: var(--brand) !important; background: var(--brand) !important; color: var(--on-brand); }
 .adm-button.primary:hover { opacity: .92; }
+.adm-button.danger { border-color: transparent !important; background: transparent !important; color: var(--danger); }
+.adm-button.danger:hover { background: var(--danger-soft) !important; }
 .adm-button.danger-solid { border-color: var(--danger) !important; background: var(--danger) !important; color: #fff; }
 .adm-button.ghost { border-color: transparent !important; background: transparent !important; color: var(--text-secondary); }
 .adm-button.small { min-height: 32px; padding: 0 10px; font-size: 12px; }

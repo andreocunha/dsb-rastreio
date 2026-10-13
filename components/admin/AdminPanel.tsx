@@ -11,13 +11,15 @@ type Device = {id: string; display_code: string; team_id: string | null; enabled
 type Alert = {id: string; team_id: string; status: string; received_at: string};
 type Overview = {teams: Team[]; devices: Device[]; alerts: Alert[]; onTrip?: string[]};
 type Tab = 'course' | 'boats' | 'devices' | 'sos';
-type Confirm = {title: string; message: string; action: string; danger?: boolean; input: Record<string, unknown>};
+type Confirm = {title: string; message: string; action: string; danger?: boolean; input: Record<string, unknown>; done?: string};
 
 /** Map colour of a team: its own, or the DSB app's badge colour until one is picked. */
 const colorOf = (team?: Team) => teamColor(team?.map_color ?? team?.color);
 const HULLS: [string, string][] = [['cat', 'Catamarã'], ['mono', 'Monocasco'], ['jetski', 'Jet ski de resgate'], ['support', 'Barco de apoio']];
 /** Rescue jet ski and support boat: tracked on the map, but not competitors. */
 const isCraft = (team?: Team) => team?.boat_hull === 'jetski' || team?.boat_hull === 'support';
+/** Boats registered in this panel can be deleted; the competition teams come from the DSB app. */
+const isRegisteredHere = (team: Team) => team.id.startsWith('trk-');
 const hullLabel = (team: Team) => HULLS.find(h => h[0] === team.boat_hull)?.[1] ?? 'Catamarã';
 // Competitors first, in name order (the order the radio trackers are numbered in), then rescue and support.
 const byName = (a: Team, b: Team) => Number(isCraft(a)) - Number(isCraft(b)) || a.name.localeCompare(b.name, 'pt-BR');
@@ -125,7 +127,7 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
       {notice && !error && <div className="adm-message" role="status">{notice}</div>}
       {!data ? <p className="adm-note">Carregando…</p>
         : tab === 'course' && course ? <CourseTab course={course} />
-        : tab === 'boats' ? <BoatsTab teams={teams} editing={editingTeam} setEditing={setEditingTeam} busy={busy} mutate={mutate} />
+        : tab === 'boats' ? <BoatsTab teams={teams} editing={editingTeam} setEditing={setEditingTeam} busy={busy} mutate={mutate} confirm={setConfirm} />
         : tab === 'devices' ? <DevicesTab teams={teams} devices={data.devices} onTrip={new Set(data.onTrip ?? [])} team={team} busy={busy} confirm={setConfirm} />
         : <SosTab alerts={data.alerts} team={team} busy={busy} confirm={setConfirm} />}
     </>;
@@ -144,7 +146,7 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
         <h2 id="adm-confirm">{confirm.title}</h2><p>{confirm.message}</p>
         <div className="adm-dialog-actions">
           <button className="adm-button" disabled={busy} onClick={() => setConfirm(null)}>Cancelar</button>
-          <button autoFocus className={`adm-button ${confirm.danger ? 'danger-solid' : 'primary'}`} disabled={busy} onClick={() => void mutate(confirm.input)}>{busy ? 'Salvando…' : confirm.action}</button>
+          <button autoFocus className={`adm-button ${confirm.danger ? 'danger-solid' : 'primary'}`} disabled={busy} onClick={() => void mutate(confirm.input, confirm.done)}>{busy ? 'Salvando…' : confirm.action}</button>
         </div>
       </div>
     </div>}
@@ -170,7 +172,7 @@ function CourseTab({course}: {course: CourseControls}) {
   </div>;
 }
 
-function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; editing: string | null; setEditing: (id: string | null) => void; busy: boolean; mutate: (input: Record<string, unknown>, done?: string) => Promise<void>}) {
+function BoatsTab({teams, editing, setEditing, busy, mutate, confirm}: {teams: Team[]; editing: string | null; setEditing: (id: string | null) => void; busy: boolean; mutate: (input: Record<string, unknown>, done?: string) => Promise<void>; confirm: (c: Confirm) => void}) {
   const [adding, setAdding] = useState(false);
   // The hull picked in the open form: rescue and support craft have no motor count.
   const [hull, setHull] = useState<string | null>(null);
@@ -197,6 +199,7 @@ function BoatsTab({teams, editing, setEditing, busy, mutate}: {teams: Team[]; ed
         </div>
         {draft !== (team.boat_hull ?? 'cat') && (draft === 'jetski' || draft === 'support') && <p className="adm-hint">Continua no mapa ao vivo, mas sai da classificação e da escalação do app.</p>}
         <button className="adm-button primary adm-wide" disabled={busy}>{busy ? 'Salvando…' : 'Salvar aparência'}</button>
+        {isRegisteredHere(team) && <button type="button" className="adm-button danger adm-wide" disabled={busy} onClick={() => confirm({title: `Excluir ${team.name}?`, message: `${team.name} sai da lista e do mapa, e os trajetos, posições e SOS dele são apagados. Não dá para desfazer.`, action: 'Excluir', danger: true, input: {action: 'deleteBoat', teamId: team.id}, done: `${team.name} excluído.`})}>Excluir barco</button>}
       </form>}
     </li>;
   };

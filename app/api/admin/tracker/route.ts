@@ -23,6 +23,27 @@ async function deleteDevice(db:Database,id:string) {
   const removed=await db.from('tracker_devices').delete().eq('id',id).select('id').single();
   if(removed.error) throw new ApiError(400,'Não foi possível apagar o aparelho.');
 }
+/**
+ * Deletes a boat registered in this panel (trk- id), with its trips, positions and SOS history.
+ * The competition teams come from the DSB app (accounts, results, fantasy) and are not deleted here.
+ */
+async function deleteBoat(db:Database,id:string) {
+  const linked=await db.from('tracker_devices').select('id',{count:'exact',head:true}).eq('team_id',id);
+  if(linked.error) throw new ApiError(503,'Não foi possível conferir o barco.');
+  if(linked.count) throw new ApiError(409,'Este barco tem aparelho vinculado. Apague o aparelho na aba Aparelhos antes de excluir o barco.');
+  // Results cascade with the team row: a boat that already scored stays.
+  for(const table of ['race_laps','penalties','race_status']) {
+    const scored=await db.from(table).select('team_id',{count:'exact',head:true}).eq('team_id',id);
+    if(scored.error) throw new ApiError(503,'Não foi possível conferir o barco.');
+    if(scored.count) throw new ApiError(409,'Este barco tem resultados lançados na competição e não pode ser excluído.');
+  }
+  for(const table of ['tracker_latest','tracker_sos','tracker_points','tracker_sessions']) {
+    const cleared=await db.from(table).delete().eq('team_id',id);
+    if(cleared.error) throw new ApiError(503,'Não foi possível excluir o barco.');
+  }
+  const removed=await db.from('teams').delete().eq('id',id).select('id').single();
+  if(removed.error) throw new ApiError(400,'Não foi possível excluir o barco.');
+}
 
 export async function GET() {
   try {
@@ -91,6 +112,10 @@ export async function POST(request:Request) {
       const id=`trk-${crypto.randomUUID().replaceAll('-','')}`;
       const result=await db.from('teams').insert({id,name,initials,color:'blue',university:'',...(hull==='cat'?{}:{boat_hull:hull})});
       if(result.error) throw new ApiError(missingMigration(result.error.code)?503:400,missingMigration(result.error.code)?'Aplique a migração de embarcações de apoio no banco.':'Não foi possível cadastrar o barco.');
+    } else if(input.action==='deleteBoat') {
+      const teamId=String(input.teamId??'');
+      if(!/^trk-[a-f0-9]{32}$/.test(teamId)) throw new ApiError(400,'Só barcos cadastrados neste painel podem ser excluídos.');
+      await deleteBoat(db,teamId);
     } else if(input.action==='style') {
       // Map appearance only: colour, hull form and outboard count. teams.color stays the DSB
       // app's badge; the map colour lives in map_color (unchanged when none is picked).
