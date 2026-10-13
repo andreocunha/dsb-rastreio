@@ -15,13 +15,18 @@ function load(path,globals={}){
 }
 const inside=(p,polygon)=>{let hit=false;for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){const [ax,ay]=polygon[i],[bx,by]=polygon[j];if((ay>p.lat)!==(by>p.lat)&&p.lon<(bx-ax)*(p.lat-ay)/(by-ay)+ax)hit=!hit;}return hit;};
 
+/** Metres from a point to the outline of a polygon. */
+const shore=(p,polygon)=>{let best=Infinity;const kx=111320*Math.cos(p.lat*Math.PI/180),ky=110700;for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){const ax=(polygon[j][0]-p.lon)*kx,ay=(polygon[j][1]-p.lat)*ky,dx=(polygon[i][0]-p.lon)*kx-ax,dy=(polygon[i][1]-p.lat)*ky-ay,t=Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy||1)));best=Math.min(best,Math.hypot(ax+t*dx,ay+t*dy));}return best;};
+
 test('every preset course lies on the satellite-traced lagoon, never on land',()=>{
   const water=JSON.parse(readFileSync('lib/map/data/imboassica-water.json','utf8'));
   const {COURSE_PRESETS,defaultCourse}=load('lib/map/courses.ts');
   for(const preset of COURSE_PRESETS){
     const course=defaultCourse(preset.id);
-    const points=[...course.buoys,...course.routes.flatMap(r=>r.points),course.finishLine.p1,course.finishLine.p2].filter(Boolean);
+    const points=[...course.buoys,...course.routes.flatMap(r=>r.points)];
     for(const p of points)assert.ok(water.lagoon.some(l=>inside(p,l)),`${preset.id}: ${p.lat},${p.lon} is on the lagoon`);
+    // The finish line starts at the pier (Instrução Técnica), so its shore end may sit on it: within 15 m of the water.
+    for(const p of [course.finishLine.p1,course.finishLine.p2])assert.ok(water.lagoon.some(l=>inside(p,l)||shore(p,l)<15),`${preset.id}: finish ${p.lat},${p.lon} is on the lagoon or at the pier`);
   }
   // The imagery bounds cover the whole lagoon and the event venue.
   const [west,south,east,north]=water.bounds;
