@@ -9,7 +9,7 @@ import { SosNotices, type PublicSos } from '@/lib/tracker/sos-notices';
 import { SosNotice } from './SosNotice';
 import { Fleet, TeamAvatar } from './Fleet';
 import { AdminPanel } from '@/components/admin/AdminPanel';
-import { adminFetch, hasAdminSession } from '@/lib/tracker/admin-session';
+import { adminFetch, hasAdminSession, mayHaveAdminSession } from '@/lib/tracker/admin-session';
 import { COURSE_PRESETS, CUSTOM_COURSE_ID } from '@/lib/map/courses';
 import { areasRowId, courseRowId, parseAreas, parseGeometry, parseLiveCourse } from '@/lib/map/course-data';
 
@@ -99,8 +99,10 @@ export default function MapCanvas() {
   useEffect(() => {
     if (embed || demo) return;
     let disposed = false;
-    void hasAdminSession().then(admin => { if (!disposed) setIsAdmin(admin); });
-    setAdminInvited(new URLSearchParams(location.search).get('admin') === '1');
+    const invited = new URLSearchParams(location.search).get('admin') === '1';
+    // Spectators are not asked about: only a browser where an organizer signed in, or the ?admin=1 link.
+    if (invited || mayHaveAdminSession()) void hasAdminSession().then(admin => { if (!disposed) setIsAdmin(admin); });
+    setAdminInvited(invited);
     return () => { disposed = true; };
   }, [embed, demo]);
 

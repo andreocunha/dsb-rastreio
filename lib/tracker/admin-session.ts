@@ -4,7 +4,7 @@
  * app's iframe browsers don't send that cookie, so every admin request carries the session as a
  * Bearer header instead (kept for this tab only).
  */
-const KEY = 'dsb:admin';
+const KEY = 'dsb:admin', HINT = 'dsb:admin-hint';
 let memory: string | null = null;
 
 export function adminToken() {
@@ -31,14 +31,27 @@ export async function adminFetch<T = Record<string, unknown>>(url: string, init:
   return result as T;
 }
 
+/** Remembers that an organizer signed in on this browser (the session cookie itself is not readable here). */
+function hint(on: boolean) {
+  try { if (on) localStorage.setItem(HINT, '1'); else localStorage.removeItem(HINT); } catch { /* storage blocked */ }
+}
+/** Worth asking the server? Spectators never signed in here, and each question is a function call on the host. */
+export function mayHaveAdminSession() {
+  if (adminToken()) return true;
+  try { return localStorage.getItem(HINT) === '1'; } catch { return false; }
+}
+
 /** Is there a valid organizer session (cookie or this tab's token)? */
 export async function hasAdminSession() {
-  try { return (await adminFetch<{admin: boolean}>('/api/admin/session?probe=1')).admin === true; } catch { return false; }
+  let admin: boolean;
+  try { admin = (await adminFetch<{admin: boolean}>('/api/admin/session?probe=1')).admin === true; } catch { return false; }
+  hint(admin);
+  return admin;
 }
 
 async function startSession(input: {password: string} | {accessToken: string}) {
   const result = await adminFetch<{token: string}>('/api/admin/session', {method: 'POST', json: input});
-  remember(result.token);
+  remember(result.token); hint(true);
 }
 export const loginWithPassword = (password: string) => startSession({password});
 
@@ -66,5 +79,5 @@ export function loginWithApp(timeout = 8000) {
 
 export async function logout() {
   try { await adminFetch('/api/admin/session', {method: 'DELETE'}); } catch { /* the session is dropped here anyway */ }
-  remember(null);
+  remember(null); hint(false);
 }
