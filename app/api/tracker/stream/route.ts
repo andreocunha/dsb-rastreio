@@ -1,5 +1,6 @@
-/** Development / split-host proxy. In the combined Render process, dsb-server
- * intercepts this path before Next. This never reads Supabase per spectator. */
+/** Development proxy. In production the map reads the stream straight from dsb-server
+ * (next.config.ts): this path redirects there, or dsb-server intercepts it in the combined
+ * Render process. This never reads Supabase per spectator. */
 export const dynamic='force-dynamic';
 export async function GET(request:Request) {
   const base=process.env.DSB_SERVER_URL ?? (process.env.NODE_ENV==='development'?'http://127.0.0.1:3107':null);

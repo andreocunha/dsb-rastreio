@@ -238,7 +238,7 @@ export default function MapCanvas() {
     }
     function connect() {
       if(isDemo||disposed||document.hidden||!navigator.onLine)return;
-      source?.close();healthy=false;source=new EventSource('/api/tracker/stream');
+      source?.close();healthy=false;source=new EventSource(process.env.LIVE_STREAM_URL||'/api/tracker/stream');
       source.onopen=()=>{phase='connected';update();};
       source.addEventListener('snapshot',event=>{
         const data=JSON.parse(event.data);if(data.v!==1)return;

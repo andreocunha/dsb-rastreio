@@ -21,7 +21,9 @@ O histórico é do barco: trocar o celular mantém o mesmo barco no mapa e no hi
 apagar um aparelho mantém trajetos, posições e SOS da equipe (migração
 `../dsb-app/supabase/migrations/20261007215611_rastreio_historico_do_barco.sql`).
 SSE pelo `dsb-server` entrega uma leitura compartilhada da frota; não há assinatura
-Supabase Realtime por visitante. O modo normal usa telemetria real, sem barcos mockados.
+Supabase Realtime por visitante. Em produção o navegador abre o SSE direto no `dsb-server`
+(`DSB_SERVER_URL`, lido no build), sem função da Vercel no caminho; `/api/tracker/stream`
+neste site só redireciona para lá. Trocar `DSB_SERVER_URL` exige novo deploy. O modo normal usa telemetria real, sem barcos mockados.
 
 O local é sempre DSB / Imboassica e a iluminação do 3D segue o sol real no local
 (horário de Brasília). Para testes, há um local em Vitória (-20.265221, -40.260797):
