@@ -95,8 +95,10 @@ export class LabelLayout {
     const occupied: Box[] = [];
     // Boats themselves are obstacles too: a name never covers another hull.
     const hulls = boats.map(b => {const r = Math.max(10, b.size * .42); return {id: b.id, box: {x: b.x - r, y: b.y - r, width: r * 2, height: r * 2}};});
-    // The followed boat is placed first; then top-to-bottom for a stable order.
-    const ordered = [...boats].sort((a, b) => Number(b.isFollowed) - Number(a.isFollowed) || a.y - b.y);
+    // The followed boat is placed first, then competitors, so rescue and support names give way
+    // when crowded; top-to-bottom within each for a stable order.
+    const support = (b: LabelBoat) => b.type === 'jetski' || b.type === 'support';
+    const ordered = [...boats].sort((a, b) => Number(b.isFollowed) - Number(a.isFollowed) || Number(support(a)) - Number(support(b)) || a.y - b.y);
     for (const boat of ordered) {
       let label = this.labels.get(boat.id);
       if (!label) {
@@ -111,7 +113,6 @@ export class LabelLayout {
       }
       label.color = boat.accentColor; label.followed = boat.isFollowed;
       if (!label.width) label.width = labelWidth(label.name, label.speed);
-      const support = boat.type === 'jetski' || boat.type === 'support';
       const offscreen = boat.x < -40 || boat.y < -40 || boat.x > width + 40 || boat.y > height + 40;
       const radius = Math.max(9, boat.size * .42);
       const fits = (side: Side) => {
@@ -123,7 +124,7 @@ export class LabelLayout {
         if (hulls.some(h => h.id !== boat.id && intersects(padded, h.box))) return null;
         return box;
       };
-      let want = !offscreen && (!support || boat.isFollowed);
+      let want = !offscreen;
       let box = want ? fits(label.side) : null;
       if (want && !box) {
         // Hysteresis: only move after the current side has been blocked for a while.
