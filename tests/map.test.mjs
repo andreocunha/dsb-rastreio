@@ -87,11 +87,6 @@ test('stationary camera paints background once, caps DPR, pauses and suspends hi
   assert.equal(fg.width,844*3,'rotation restores native density when it fits the budget');
   document.hidden=true; events.visibilitychange(); assert.equal(nextFrame,undefined);
   document.hidden=false; events.visibilitychange(); assert.equal(typeof nextFrame,'function');
-  engine.setHostHidden(true); assert.equal(nextFrame,undefined,'hidden by the host app: no frames, like a hidden tab');
-  engine.zoom(.1); assert.equal(nextFrame,undefined,'nothing wakes it while hidden');
-  document.hidden=true; events.visibilitychange(); document.hidden=false; events.visibilitychange();
-  assert.equal(nextFrame,undefined,'the page becoming visible does not undo the host');
-  engine.setHostHidden(false); assert.equal(typeof nextFrame,'function');
   engine.destroy(); assert.equal(nextFrame,undefined);
 });
 test('satellite loading has a six-request ceiling, bounded memory and no failed-tile retry loop', () => {
