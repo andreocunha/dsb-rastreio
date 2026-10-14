@@ -12,6 +12,7 @@ import { AdminPanel } from '@/components/admin/AdminPanel';
 import { adminFetch, hasAdminSession, mayHaveAdminSession } from '@/lib/tracker/admin-session';
 import { COURSE_PRESETS, CUSTOM_COURSE_ID } from '@/lib/map/courses';
 import { areasRowId, courseRowId, parseAreas, parseGeometry, parseLiveCourse } from '@/lib/map/course-data';
+import { useSheetStops } from '@/lib/ui/sheet';
 
 /** Hidden by the host app: how long the live stream stays open before it is closed too. */
 const HOST_HIDDEN_STREAM_MS = 10000;
@@ -62,7 +63,10 @@ export default function MapCanvas() {
   const compassRef = useRef<HTMLButtonElement>(null);
   const engineRef = useRef<EngineAPI>(null);
   const editorRef = useRef<HTMLElement>(null);
-  const [compactEditor, setCompactEditor] = useState(false);
+  const editorMainRef = useRef<HTMLDivElement>(null);
+  const editorMoreRef = useRef<HTMLDivElement>(null);
+  // Phones: the editor is a sheet docked at the bottom; closed it shows only the tools, so the map stays in view.
+  const [editorOpen, setEditorOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<EditTool>(null);
   const [routeColor, setRouteColor] = useState(ROUTE_COLORS[0].hex);
   const [editing, setEditing] = useState(false);
@@ -315,7 +319,7 @@ export default function MapCanvas() {
   function selectTool(tool: EditTool) {
     const next = activeTool === tool ? null : tool;
     setActiveTool(next); engineRef.current?.setEditTool(next);
-    if (next && mobile) setCompactEditor(true);
+    if (next && mobile) setEditorOpen(false);
   }
   function closeEditor() {
     clearTimeout(saveTimer.current);
@@ -325,7 +329,7 @@ export default function MapCanvas() {
   async function openEditor() {
     if (editing) return;
     // Keep the current view (3D or not) and camera: editing works in both.
-    setEditing(true); setActiveTool(null); setCompactEditor(false); setSaveState({state: 'idle'});
+    setEditing(true); setActiveTool(null); setEditorOpen(false); setSaveState({state: 'idle'});
     engineRef.current?.follow(null); engineRef.current?.beginEdit();
     try {
       const result = await adminFetch<{rows: {id: string; data: unknown}[]}>('/api/admin/course');
@@ -362,9 +366,12 @@ export default function MapCanvas() {
   const currentCourse = venueId==='imboassica' && COURSE_PRESETS.find(p => p.id === courseId);
   // Without a published course yet, spectators see the first model.
   const isLive = (live?.venue ?? 'imboassica') === venueId && (live?.course ?? COURSE_PRESETS[0].id) === courseId;
+  const courseName = currentCourse ? currentCourse.name : courseId === CUSTOM_COURSE_ID ? 'Circuito livre' : '';
+  const editorShown = editing && !adminOpen;
+  const dragEditor = useSheetStops(editorRef, editorMainRef, editorMoreRef, editorOpen, setEditorOpen, editorShown && mobile);
 
   return (
-    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${ready?'':'race-app--loading'} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'}`}>
+    <main className={`race-app ${embed?'race-app--embed':''} ${style === 'satellite' || view3D ? 'race-app--satellite' : ''} ${followed ? 'race-app--following' : ''} ${view3D?'race-app--3d':''} ${loading3D&&!view3D?'race-app--preparing':''} ${ready?'':'race-app--loading'} ${demo?'race-app--demo':''} ${fleet.length?'':'race-app--no-fleet'} ${editorShown?'race-app--editing':''}`}>
       {feedStatus && <div className="tracker-feed" data-tone={feedTone}><span role="status">{feedStatus}</span>{viewers!==null && <span className="tracker-viewers" role="img" aria-label={`${viewers} ${viewers===1?'pessoa':'pessoas'} assistindo agora`} title={`${viewers} ${viewers===1?'pessoa':'pessoas'} assistindo agora`}><Icon name="eye" size={13}/>{viewers}</span>}</div>}
       {/* The simulation stays for testing: open with ?demo=1. */}
       {demo && <div className="demo-controls" aria-label="Demonstração dos barcos">
@@ -400,18 +407,44 @@ export default function MapCanvas() {
         <><TeamAvatar boat={followed}/><div className="follow-identity"><span className="eyebrow">ACOMPANHANDO</span><strong>{followed.label}</strong></div><div className="follow-stat"><strong>{(demo || (followed.speedKnown && isRecentPosition(followed.capturedAt))) ? followed.speed.toFixed(1) : '—'}<small> nós</small></strong><span>velocidade</span></div><div className="follow-stat follow-heading"><strong>{followed.heading.toFixed(0)}°</strong><span>direção</span></div><button className="icon-button" aria-label="Parar de acompanhar" onClick={() => engineRef.current?.follow(null)}><Icon name="close" size={16}/></button></>
       </section>}
 
-      {editing && !adminOpen && <section ref={editorRef} id="course-editor" className={`editor-panel ${compactEditor && mobile ? 'editor-panel--compact' : ''}`} aria-label="Editor do circuito"><div className="editor-heading"><div><span className="eyebrow">ORGANIZAÇÃO</span><h2>Percursos</h2></div><button className="icon-button" onClick={toggleEditor} aria-label="Fechar editor"><Icon name="close" size={18}/></button></div>
-        {venueId==='imboassica' && <label className="course-picker">Prova<select value={courseId} onChange={event => selectCourse(event.target.value)}>{COURSE_PRESETS.map(p => <option value={p.id} key={p.id}>{p.name}{live?.venue===venueId&&live.course===p.id?' · no ar':''}</option>)}<option value={CUSTOM_COURSE_ID}>Circuito livre{live?.venue===venueId&&live.course===CUSTOM_COURSE_ID?' · no ar':''}</option></select></label>}
-        <div className="publish-row">{isLive ? <span className="live-badge">● No ar para o público</span> : <button className="publish-button" onClick={()=>void publishCourse()}>Mostrar esta prova ao público</button>}</div>
-        {currentCourse && <div className="course-meta"><strong>{currentCourse.schedule}</strong><span>Traçado aproximado das referências</span></div>}
-        <div className="editor-tools">{TOOLS.map(tool => <button key={tool.id} onClick={() => selectTool(tool.id)} aria-pressed={activeTool === tool.id}><Icon name={tool.icon}/><span>{tool.label}</span></button>)}</div><p className="editor-hint">{TOOLS.find(t => t.id === activeTool)?.hint || 'Escolha uma prova e uma ferramenta para ajustar seus pontos no mapa.'}</p>
-        {activeTool === 'route' && <><div className="route-colors">{ROUTE_COLORS.map(c => <button key={c.id} aria-label={`Percurso ${c.label}`} aria-pressed={routeColor === c.hex} style={{background: c.hex}} onClick={() => {setRouteColor(c.hex); engineRef.current?.newRoute(c.hex);}}/>)}</div><div className="editor-actions"><button onClick={() => engineRef.current?.undoRoutePoint()}>Desfazer ponto</button><button onClick={() => engineRef.current?.newRoute(routeColor)}>Novo percurso</button><button onClick={() => engineRef.current?.deleteActiveRoute()}>Apagar percurso</button><button onClick={() => engineRef.current?.clearAllRoutes()}>Apagar todos</button></div></>}
-        {activeTool === 'finish' && <button className="text-button" onClick={() => engineRef.current?.clearFinishLine()}>Limpar chegada</button>}
-        {activeTool === 'maintenance' && <button className="text-button" onClick={() => engineRef.current?.clearMaintenanceArea()}>Limpar área de apoio</button>}
-        {activeTool === 'waiting' && <button className="text-button" onClick={() => engineRef.current?.clearWaitingArea()}>Limpar área de espera</button>}
-        {mobile && <button className="editor-expand" onClick={() => setCompactEditor(!compactEditor)} aria-expanded={!compactEditor}>{compactEditor ? 'Mais opções da prova' : 'Recolher opções'}</button>}
-        <div className="course-actions"><button disabled={!canUndo} onClick={() => engineRef.current?.undoCourse()}>Desfazer ajuste</button>{currentCourse && <button onClick={() => engineRef.current?.resetCourse()}>Restaurar modelo</button>}<button onClick={fitVisibleCourse}>Enquadrar prova</button></div>
-        <div className={`saved-note ${saveState.state==='error' ? 'saved-note--error' : ''}`} role="status"><Icon name={saveState.state==='error' ? 'offline' : 'check'} size={13}/>{saveState.state==='saving' ? 'Salvando…' : saveState.state==='error' ? (saveState.message || 'Não foi possível salvar.') : isLive ? 'Salvo no servidor · o público vê em segundos' : 'Salvo no servidor · ainda não publicado'}</div>
+      {editorShown && <section ref={editorRef} id="course-editor" className={`editor-panel ${mobile ? (editorOpen ? 'editor-panel--open' : 'editor-panel--peek') : ''}`} aria-label="Editor do circuito">
+        {/* Always in view: the tools and what they act on. On phones this is all the closed sheet shows. */}
+        <div className="editor-main" ref={editorMainRef}>
+          <div className="editor-grab" onPointerDown={dragEditor}>
+            <span className="editor-handle" aria-hidden="true"/>
+            <div className="editor-heading">
+              <div><span className="eyebrow">ORGANIZAÇÃO</span><h2>Percursos</h2>{courseName && <span className="editor-sub">{courseName}{isLive ? ' · no ar' : ''}</span>}</div>
+              <div className="editor-heading-actions">
+                {mobile && <button className="icon-button editor-toggle" onClick={() => setEditorOpen(!editorOpen)} aria-expanded={editorOpen} aria-controls="course-editor-more" aria-label={editorOpen ? 'Recolher opções' : 'Mais opções da prova'}><Icon name="chevron" size={18}/></button>}
+                <button className="icon-button" onClick={toggleEditor} aria-label="Fechar editor"><Icon name="close" size={18}/></button>
+              </div>
+            </div>
+          </div>
+          <div className="editor-tools">{TOOLS.map(tool => <button key={tool.id} onClick={() => selectTool(tool.id)} aria-pressed={activeTool === tool.id}><Icon name={tool.icon}/><span>{tool.label}</span></button>)}</div>
+          <p className="editor-hint">{TOOLS.find(t => t.id === activeTool)?.hint || 'Escolha uma ferramenta para ajustar seus pontos no mapa.'}</p>
+          <div className="editor-context">
+            <button disabled={!canUndo} onClick={() => engineRef.current?.undoCourse()}>Desfazer ajuste</button>
+            <button onClick={fitVisibleCourse}>Enquadrar prova</button>
+            {activeTool === 'route' && <>
+              <span className="route-colors">{ROUTE_COLORS.map(c => <button key={c.id} aria-label={`Percurso ${c.label}`} aria-pressed={routeColor === c.hex} style={{background: c.hex}} onClick={() => {setRouteColor(c.hex); engineRef.current?.newRoute(c.hex);}}/>)}</span>
+              <button onClick={() => engineRef.current?.undoRoutePoint()}>Desfazer ponto</button>
+              <button onClick={() => engineRef.current?.newRoute(routeColor)}>Novo percurso</button>
+              <button onClick={() => engineRef.current?.deleteActiveRoute()}>Apagar percurso</button>
+              <button onClick={() => engineRef.current?.clearAllRoutes()}>Apagar todos</button>
+            </>}
+            {activeTool === 'finish' && <button onClick={() => engineRef.current?.clearFinishLine()}>Limpar chegada</button>}
+            {activeTool === 'maintenance' && <button onClick={() => engineRef.current?.clearMaintenanceArea()}>Limpar área de apoio</button>}
+            {activeTool === 'waiting' && <button onClick={() => engineRef.current?.clearWaitingArea()}>Limpar área de espera</button>}
+          </div>
+        </div>
+        {/* The race itself: which one, whether the public sees it. Below the fold of the closed sheet. */}
+        <div className="editor-more" id="course-editor-more" ref={editorMoreRef} inert={mobile && !editorOpen}>
+          {venueId==='imboassica' && <label className="course-picker">Prova<select value={courseId} onChange={event => selectCourse(event.target.value)}>{COURSE_PRESETS.map(p => <option value={p.id} key={p.id}>{p.name}{live?.venue===venueId&&live.course===p.id?' · no ar':''}</option>)}<option value={CUSTOM_COURSE_ID}>Circuito livre{live?.venue===venueId&&live.course===CUSTOM_COURSE_ID?' · no ar':''}</option></select></label>}
+          <div className="publish-row">{isLive ? <span className="live-badge">● No ar para o público</span> : <button className="publish-button" onClick={()=>void publishCourse()}>Mostrar esta prova ao público</button>}</div>
+          {currentCourse && <div className="course-meta"><strong>{currentCourse.schedule}</strong><span>Traçado aproximado das referências</span></div>}
+          {currentCourse && <button className="text-button" onClick={() => engineRef.current?.resetCourse()}>Restaurar o modelo desta prova</button>}
+          <div className={`saved-note ${saveState.state==='error' ? 'saved-note--error' : ''}`} role="status"><Icon name={saveState.state==='error' ? 'offline' : 'check'} size={13}/>{saveState.state==='saving' ? 'Salvando…' : saveState.state==='error' ? (saveState.message || 'Não foi possível salvar.') : isLive ? 'Salvo no servidor · o público vê em segundos' : 'Salvo no servidor · ainda não publicado'}</div>
+        </div>
       </section>}
       {adminOpen && <AdminPanel mode="sheet" onClose={() => setAdminOpen(false)} onSignedIn={adminSignedIn} course={{
         courses: [...COURSE_PRESETS.map(p => ({id: p.id, name: p.name})), {id: CUSTOM_COURSE_ID, name: 'Circuito livre'}].map(c => ({...c, live: live?.venue === venueId && live.course === c.id})),

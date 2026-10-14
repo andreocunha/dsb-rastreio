@@ -13,12 +13,21 @@
 .dsb-admin button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
 .dsb-admin code { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .4px; }
 
-/* On the map: a bottom sheet on phones, a side panel on large screens. */
-.dsb-admin--sheet { position: absolute; z-index: 40; inset: auto 0 0 0; max-height: min(86dvh, 760px); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 40px #18112440; animation: adm-up .22s ease-out; }
-@media (min-width: 700px) { .dsb-admin--sheet { inset: 16px 16px 16px auto; width: 420px; max-height: none; border-radius: 18px; animation: adm-in .2s ease-out; } }
-@keyframes adm-up { from { transform: translateY(24px); opacity: 0; } }
+/* On the map: a bottom sheet on phones (dragged like the DSB app's, see lib/ui/sheet.ts), a side panel
+   on large screens. The fixed height keeps the sheet still when switching between a short and a long tab. */
+.dsb-admin--sheet { position: absolute; z-index: 40; inset: auto 0 0 0; height: min(88dvh, 760px); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 40px #18112440; animation: adm-up .3s cubic-bezier(.2, .8, .2, 1); }
+.adm-backdrop { position: absolute; z-index: 39; inset: 0; background: #18112470; animation: adm-fade .3s ease-out; }
+.adm-handle { flex-shrink: 0; width: 36px; height: 4px; margin: 8px auto 0; border-radius: 4px; background: var(--border-strong); }
+.dsb-admin--sheet .adm-head { padding-top: 10px; }
+@media (min-width: 700px) {
+  .dsb-admin--sheet { inset: 16px 16px 16px auto; width: 420px; height: auto; border-radius: 18px; animation: adm-in .2s ease-out; }
+  .dsb-admin--sheet .adm-head { padding-top: 18px; }
+  .adm-backdrop, .adm-handle { display: none; }
+}
+@keyframes adm-up { from { transform: translateY(100%); } }
+@keyframes adm-fade { from { opacity: 0; } }
 @keyframes adm-in { from { transform: translateX(16px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .dsb-admin--sheet { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .dsb-admin--sheet, .adm-backdrop { animation: none; } }
 /* /admin: the site locks page scrolling (the map needs it), so the page scrolls on its own. */
 .dsb-admin--page { position: fixed; inset: 0; }
 .dsb-admin--page .adm-head, .dsb-admin--page .adm-body > * { width: 100%; max-width: 920px; margin-inline: auto; }

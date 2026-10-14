@@ -1,9 +1,10 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { adminFetch, hasAdminSession, insideApp, loginWithApp, loginWithPassword, logout } from '@/lib/tracker/admin-session';
 import { TEAM_COLORS, teamColor } from '@/lib/map/team-colors';
 import { logoUrl } from '@/lib/map/logos';
 import { positionAge } from '@/lib/tracker/freshness';
+import { useBottomSheet } from '@/lib/ui/sheet';
 import './admin.css';
 
 type Team = {id: string; name: string; initials: string; color?: string; map_color?: string | null; logo?: string | null; boat_hull?: string; boat_motors?: number};
@@ -59,6 +60,9 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [editingTeam, setEditingTeam] = useState<string | null>(null);
   const app = insideApp();
+  // On phones the sheet behaves like the DSB app's: pull it down (or tap outside) to close.
+  const sheetRef = useRef<HTMLElement>(null), backdropRef = useRef<HTMLDivElement>(null);
+  const dismiss = useBottomSheet(sheetRef, backdropRef, onClose, mode === 'sheet');
 
   const refresh = useCallback(async () => setData(await adminFetch<Overview>('/api/admin/tracker')), []);
   const enter = useCallback(async (how: () => Promise<void>) => {
@@ -138,16 +142,19 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
         : <SosTab alerts={data.alerts} team={team} busy={busy} confirm={setConfirm} />}
     </>;
 
-  return <section className={`dsb-admin dsb-admin--${mode}`} aria-label="Painel da organização">
+  return <>
+    {mode === 'sheet' && <div ref={backdropRef} className="adm-backdrop" onClick={() => dismiss()} />}
+    <section ref={sheetRef} className={`dsb-admin dsb-admin--${mode}`} aria-label="Painel da organização">
+    {mode === 'sheet' && <span className="adm-handle" aria-hidden="true" />}
     <header className="adm-head">
       <div><span className="adm-eyebrow">DESAFIO SOLAR BRASIL</span><h1>Organização</h1></div>
       <div className="adm-head-actions">
         {state === 'in' && !app && <button className="adm-button ghost" onClick={() => { void logout(); setState('out'); setData(null); }}>Sair</button>}
-        {onClose && <button className="adm-icon" onClick={onClose} aria-label="Fechar painel">×</button>}
+        {onClose && <button className="adm-icon" onClick={() => dismiss()} aria-label="Fechar painel">×</button>}
       </div>
     </header>
     <div className="adm-body">{body}</div>
-    {confirm && <div className="adm-overlay" onClick={() => !busy && setConfirm(null)}>
+    {confirm && <div className="adm-overlay" data-no-sheet-drag onClick={() => !busy && setConfirm(null)}>
       <div className="adm-dialog" role="dialog" aria-modal="true" aria-labelledby="adm-confirm" onClick={e => e.stopPropagation()}>
         <h2 id="adm-confirm">{confirm.title}</h2><p>{confirm.message}</p>
         <div className="adm-dialog-actions">
@@ -156,7 +163,8 @@ export function AdminPanel({mode, onClose, onSignedIn, course}: {mode: 'sheet' |
         </div>
       </div>
     </div>}
-  </section>;
+    </section>
+  </>;
 }
 
 function CourseTab({course}: {course: CourseControls}) {
