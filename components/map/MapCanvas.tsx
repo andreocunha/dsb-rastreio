@@ -13,6 +13,8 @@ import { adminFetch, hasAdminSession, mayHaveAdminSession } from '@/lib/tracker/
 import { COURSE_PRESETS, CUSTOM_COURSE_ID } from '@/lib/map/courses';
 import { areasRowId, courseRowId, parseAreas, parseGeometry, parseLiveCourse } from '@/lib/map/course-data';
 
+/** Hidden by the host app: how long the live stream stays open before it is closed too. */
+const HOST_HIDDEN_STREAM_MS = 10000;
 const TOOLS = [
   {id: 'buoy', label: 'Boias', icon: 'buoy', hint: 'Arraste uma boia para mover. Toque na água para adicionar ou numa boia para remover.'},
   {id: 'route', label: 'Percurso', icon: 'route', hint: 'Toque num ponto para escolher o percurso. Arraste os pontos para ajustar, toque sobre a linha para inserir um ponto ou na água para continuar.'},
@@ -207,6 +209,8 @@ export default function MapCanvas() {
       if(event.source!==window.parent)return;
       const type=event.data?.type;
       if(type==='dsb-tracker:covered')engine.setCovered(!!event.data.covered);
+      // Out of sight in the host app (another tab of it, the live video on top): no drawing, and no stream after a moment.
+      else if(type==='dsb-tracker:hidden')hostVisibility(!!event.data.hidden);
       // Organizers are announced by message: with it in the address, the map reloaded from scratch once their account loaded.
       else if(type==='dsb-tracker:admin')setAdminInvited(!!event.data.admin);
       else if(type==='dsb-tracker:ready?'&&shown)window.parent.postMessage({type:'dsb-tracker:ready'},'*');
@@ -217,6 +221,7 @@ export default function MapCanvas() {
     if(initialVenue.id!=='imboassica') {engine.selectVenue(initialVenue.id);setVenueId(initialVenue.id);}
     let disposed=false, source:EventSource|null=null, first=true;
     let reconnect:ReturnType<typeof setTimeout>|undefined;
+    let hostHidden=false, hostTimer:ReturnType<typeof setTimeout>|undefined;
     let failures=0, sequence=0;
     let phase:'connecting'|'connected'|'disconnected'='connecting', healthy=false;
     const rows=new Map<string,LiveBoat>();
@@ -239,7 +244,7 @@ export default function MapCanvas() {
       return {id:row[0],label:row[1],color:row[2],...style(row[8]),logo:row[9]||undefined,lat:row[3]/1e7,lon:row[4]/1e7,speed:row[5]===null?null:row[5]/100*1.943844,heading:row[6],capturedAt:new Date(row[7]).toISOString()};
     }
     function connect() {
-      if(isDemo||disposed||document.hidden||!navigator.onLine)return;
+      if(isDemo||disposed||document.hidden||hostHidden||!navigator.onLine)return;
       source?.close();healthy=false;source=new EventSource(process.env.LIVE_STREAM_URL||'/api/tracker/stream');
       source.onopen=()=>{phase='connected';update();};
       source.addEventListener('snapshot',event=>{
@@ -273,6 +278,13 @@ export default function MapCanvas() {
       };
     }
     function visibility(){clearTimeout(reconnect);if(document.hidden){source?.close();source=null;}else connect();}
+    // The stream outlives a quick look at another tab of the host app (no reconnect on every return); drawing stops at once.
+    function hostVisibility(hidden:boolean){
+      if(hostHidden===hidden)return;
+      hostHidden=hidden;engine.setHostHidden(hidden);clearTimeout(hostTimer);
+      if(hidden)hostTimer=setTimeout(()=>{clearTimeout(reconnect);source?.close();source=null;},HOST_HIDDEN_STREAM_MS);
+      else if(!source||source.readyState===EventSource.CLOSED)connect();
+    }
     document.addEventListener('visibilitychange',visibility);window.addEventListener('online',connect);
     connect();
     if(isDemo){setFeedStatus('Demonstração · Dados fictícios');setFeedTone('demo');engine.setLighting('noon');}
@@ -281,7 +293,7 @@ export default function MapCanvas() {
     }
     // Refresh stale labels locally even when there are no network changes.
     const staleTimer=setInterval(update,5000);
-    return ()=>{disposed=true;clearTimeout(reconnect);clearTimeout(batch);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);window.removeEventListener('message',onHost);engine.destroy();engineRef.current=null;};
+    return ()=>{disposed=true;clearTimeout(reconnect);clearTimeout(hostTimer);clearTimeout(batch);clearInterval(staleTimer);source?.close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',connect);window.removeEventListener('message',onHost);engine.destroy();engineRef.current=null;};
   }, []);
 
   async function changeView(enabled:boolean) {

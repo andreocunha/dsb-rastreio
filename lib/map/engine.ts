@@ -91,6 +91,8 @@ export interface EngineAPI {
   setUiBusy: (busy: boolean) => void;
   /** O app que embute o mapa cobriu a tela (ex.: bottom sheet): desenha devagar até descobrir. */
   setCovered: (covered: boolean) => void;
+  /** O app que embute o mapa o tirou da tela (outra aba dele, vídeo por cima): para de desenhar até voltar. */
+  setHostHidden: (hidden: boolean) => void;
   addBuoy: (lat: number, lon: number) => Buoy;
   removeBuoy: (id: string) => void;
   getBuoys: () => Buoy[];
@@ -259,6 +261,9 @@ export function initEngine(
   // e a animação do sheet fica com a CPU (no Android o mapa divide o processo com o app).
   let covered = false;
   const COVERED_FPS = 4;
+  // Fora da tela no app que o embute: o iframe segue vivo e "visível" para o navegador, então o app avisa.
+  let hostHidden = false;
+  const asleep = () => document.hidden || hostHidden;
   // Eco mode (3D): full frame rate only while someone interacts or the camera is moving.
   // A race is watched for hours with the phone in hand; idle frames at 30 fps look the same
   // (boats cover a pixel or two per frame) and halve the heat and battery drain.
@@ -268,7 +273,7 @@ export function initEngine(
   /** Back to full rate immediately, cancelling a pending eco wait. */
   function wake() {
     activeUntil = now() + ACTIVE_MS;
-    if (wakeTimer !== undefined && running && !document.hidden) { clearTimeout(wakeTimer); wakeTimer = undefined; rafId = requestAnimationFrame(frame); }
+    if (wakeTimer !== undefined && running && !asleep()) { clearTimeout(wakeTimer); wakeTimer = undefined; rafId = requestAnimationFrame(frame); }
   }
   // Display refresh period, learnt from back-to-back animation frames (60, 90, 120 Hz… phones).
   // Display refresh period, learnt from back-to-back animation frames (60, 90, 120 Hz… phones).
@@ -678,7 +683,7 @@ export function initEngine(
   function visibility() {
     cancelAnimationFrame(rafId);if(wakeTimer!==undefined){clearTimeout(wakeTimer);wakeTimer=undefined;}backToBack=false;
     lastTime = 0;view3D?.resetClock();
-    if (!document.hidden && running) rafId = requestAnimationFrame(frame);
+    if (!asleep() && running) rafId = requestAnimationFrame(frame);
   }
   document.addEventListener('visibilitychange', visibility);
   rafId = requestAnimationFrame(frame);
@@ -762,6 +767,7 @@ export function initEngine(
     setPaused(paused) { state.paused = paused; },
     setUiBusy(busy) { uiBusy = busy; if (!busy) wake(); },
     setCovered(value) { if (covered === value) return; covered = value; if (!value) wake(); },
+    setHostHidden(value) { if (hostHidden === value) return; hostHidden = value; visibility(); },
     addBuoy,
     removeBuoy,
     getBuoys: () => [...state.buoys],
