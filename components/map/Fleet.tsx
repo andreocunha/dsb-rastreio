@@ -68,7 +68,8 @@ export const Fleet = memo(function Fleet({fleet, selected, demo, onSelect, onBus
       for (const [evt, fn] of listeners) el.removeEventListener(evt, fn);
     };
   }, [onBusy]);
-  const ordered = [...fleet].sort((a, b) => Number(support(a)) - Number(support(b)));
+  // Fixed order: competitors by name (the boat number counts as a number), then rescue and support.
+  const ordered = [...fleet].sort((a, b) => Number(support(a)) - Number(support(b)) || a.label.localeCompare(b.label, 'pt-BR', {numeric: true}));
   // No boat on the water yet: nothing to show (no empty card over the map).
   if (!fleet.length) return null;
   return (

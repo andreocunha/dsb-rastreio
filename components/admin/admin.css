@@ -27,7 +27,6 @@
   .dsb-admin--page .adm-head h1 { font-size: 28px; }
   .dsb-admin--page .adm-body { padding: 0 24px 40px; }
   .dsb-admin--page .adm-tabs { max-width: 520px; margin-left: max(0px, calc((100% - 920px) / 2)); }
-  .adm-two--wide { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 
 .adm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 18px 12px; }
@@ -56,7 +55,8 @@
 .adm-signin p { color: var(--text-secondary); }
 .adm-error-text { color: var(--danger) !important; font-size: 13px; }
 
-.adm-message { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--success-soft); color: var(--success); font-size: 13px; font-weight: 500; }
+/* Stays in view under the tabs: a save at the end of the list still shows its result. */
+.adm-message { position: sticky; top: 46px; z-index: 2; box-shadow: 0 6px 16px -8px #2a1d4040; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--success-soft); color: var(--success); font-size: 13px; font-weight: 500; }
 .adm-message.adm-error { background: var(--danger-soft); color: var(--danger); }
 .adm-message button { font-size: 18px; line-height: 1; }
 
@@ -90,7 +90,7 @@
 .adm-list { margin: 0; padding: 0; list-style: none; }
 .adm-list > li + li { border-top: 1px solid var(--border); }
 .adm-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 12px; text-align: left; }
-button.adm-row:hover { background: var(--surface-hover); }
+@media (hover: hover) { button.adm-row:hover { background: var(--surface-hover); } }
 .adm-row-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .adm-row-main strong { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .adm-row-main small { overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -98,10 +98,13 @@ button.adm-row:hover { background: var(--surface-hover); }
 .adm-badge { display: grid; flex-shrink: 0; place-items: center; overflow: hidden; border-radius: 11px; background: #fff; box-shadow: inset 0 0 0 2px var(--team); }
 .adm-badge img { width: 100%; height: 100%; padding: 4px; object-fit: contain; }
 .adm-badge b { color: var(--team); font-size: 12px; font-weight: 700; }
-.adm-swatch { width: 14px; height: 14px; flex-shrink: 0; border-radius: 50%; box-shadow: 0 0 0 2px #fff, 0 0 0 3px var(--border-strong); }
 .adm-tag { flex-shrink: 0; padding: 3px 8px; border-radius: 999px; background: var(--surface-hover); color: var(--text-tertiary); font-size: 11px; font-weight: 600; }
 .adm-tag.on { background: var(--success-soft); color: var(--success); }
-@media (max-width: 420px) { .adm-device .adm-tag { display: none; } }
+.adm-chevron { flex-shrink: 0; color: var(--text-tertiary); font-size: 20px; line-height: 1; transition: transform .15s; }
+[aria-expanded="true"] > .adm-chevron { transform: rotate(90deg); }
+/* Phones without a boat: pick the boat right on the row. 16px avoids iOS zooming in on focus. */
+.adm-pick { max-width: 132px; min-height: 36px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+.adm-device code { font-size: 13px; }
 
 .adm-edit { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 14px; }
 .adm-colors { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; border: 0; }
@@ -122,13 +125,6 @@ button.adm-row:hover { background: var(--surface-hover); }
 .adm-dialog p { color: var(--text-secondary); }
 .adm-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 
-/* Several phones at once. */
-.adm-check { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-left: -4px; cursor: pointer; }
-.adm-check input { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
-.adm-chosen { background: var(--brand-soft); }
-.adm-link { margin-left: auto; color: var(--brand) !important; font-size: 12px !important; font-weight: 600; }
-.adm-link:hover { text-decoration: underline; }
-.adm-bulk { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 10px 10px 10px 14px; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface); box-shadow: 0 -6px 24px #2a1d401f; }
-.adm-bulk > span { flex: 1; color: var(--text-secondary); font-size: 13px; }
-.adm-bulk strong { color: var(--text); }
-@media (max-width: 699px) { .adm-two--wide { grid-template-columns: minmax(0, 1fr); } }
+/* Section heading that folds its list (phones without a boat). */
+.dsb-admin button.adm-toggle { width: 100%; min-height: 40px; padding: 0 4px; color: var(--text-secondary); font-size: 13px; font-weight: 600; text-align: left; }
+.adm-toggle .adm-chevron { margin-left: auto; }

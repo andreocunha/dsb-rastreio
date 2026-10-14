@@ -28,9 +28,9 @@ async function deleteDevice(db:Database,id:string) {
  * The competition teams come from the DSB app (accounts, results, fantasy) and are not deleted here.
  */
 async function deleteBoat(db:Database,id:string) {
-  const linked=await db.from('tracker_devices').select('id',{count:'exact',head:true}).eq('team_id',id);
+  const linked=await db.from('tracker_devices').select('id',{count:'exact',head:true}).eq('team_id',id).eq('enabled',true);
   if(linked.error) throw new ApiError(503,'Não foi possível conferir o barco.');
-  if(linked.count) throw new ApiError(409,'Este barco tem aparelho vinculado. Apague o aparelho na aba Aparelhos antes de excluir o barco.');
+  if(linked.count) throw new ApiError(409,'Este barco tem aparelho vinculado. Apague o ID do aparelho e salve antes de excluir o barco.');
   // Results cascade with the team row: a boat that already scored stays.
   for(const table of ['race_laps','penalties','race_status']) {
     const scored=await db.from(table).select('team_id',{count:'exact',head:true}).eq('team_id',id);
@@ -41,9 +41,48 @@ async function deleteBoat(db:Database,id:string) {
     const cleared=await db.from(table).delete().eq('team_id',id);
     if(cleared.error) throw new ApiError(503,'Não foi possível excluir o barco.');
   }
+  // Phones this boat used before (already unlinked) stay in the list, without a boat.
+  const freed=await db.from('tracker_devices').update({team_id:null}).eq('team_id',id).eq('enabled',false);
+  if(freed.error) throw new ApiError(503,'Não foi possível excluir o barco.');
   const removed=await db.from('teams').delete().eq('id',id).select('id').single();
   if(removed.error) throw new ApiError(400,'Não foi possível excluir o barco.');
 }
+/** Retires the phone a boat is using: its open trip is closed and it stops sending that boat's positions. */
+async function unlinkDevices(db:Database,teamId:string,exceptCode='') {
+  const previous=await db.from('tracker_devices').select('id').eq('team_id',teamId).eq('enabled',true).neq('display_code',exceptCode);
+  if(previous.error) throw new ApiError(503,'Não foi possível conferir o aparelho atual do barco.');
+  for(const old of previous.data) {
+    const ended=await db.from('tracker_sessions').update({ended_at:new Date().toISOString()}).eq('device_id',old.id).is('ended_at',null);
+    const disabled=await db.from('tracker_devices').update({enabled:false}).eq('id',old.id);
+    if(ended.error || disabled.error) throw new ApiError(503,'Não foi possível retirar o aparelho anterior.');
+  }
+}
+/**
+ * Links a phone to a boat. Positions belong to the boat, not the phone: linking a new phone to a
+ * boat that already has one swaps them (the boat keeps its name, colour and history on the map).
+ */
+async function bindDevice(db:Database,code:string,teamId:string) {
+  // Checked first, so a mistyped code (or a phone busy on another boat) does not leave this boat
+  // without its current phone.
+  const found=await db.from('tracker_devices').select('id,team_id').eq('display_code',code).maybeSingle();
+  if(found.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
+  if(!found.data) throw new ApiError(404,'ID de aparelho não encontrado. Abra o DSB Tracker com internet no aparelho primeiro.');
+  if(found.data.team_id!==teamId) {
+    const open=await db.from('tracker_sessions').select('id',{count:'exact',head:true}).eq('device_id',found.data.id).is('ended_at',null);
+    if(open.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
+    if(open.count) throw new ApiError(409,'Este aparelho está numa viagem de outro barco. Encerre a viagem antes de trocar de barco.');
+  }
+  await unlinkDevices(db,teamId,code);
+  const result=await db.rpc('tracker_bind_device',{p_code:code,p_team:teamId});
+  if(result.error) {
+    if(result.error.code==='23505') throw new ApiError(409,'Este barco já tem um tracker. Desative o anterior primeiro.');
+    if(result.error.message.includes('device_not_found')) throw new ApiError(404,'ID de aparelho não encontrado. Abra o DSB Tracker com internet no aparelho primeiro.');
+    if(result.error.message.includes('device_has_active_trip')) throw new ApiError(409,'Este aparelho está numa viagem de outro barco. Encerre a viagem antes de trocar de barco.');
+    throw new ApiError(400,'Não foi possível vincular este aparelho.');
+  }
+}
+const deviceCode=(value:unknown)=>String(value??'').replace(/\s/g,'').toUpperCase();
+const isDeviceCode=(code:string)=>/^[A-F0-9]{10}$/.test(code);
 
 export async function GET() {
   try {
@@ -64,25 +103,23 @@ export async function POST(request:Request) {
   try {
     sameOrigin(request); await operator(); const input=await body(request,16384); const db=database();
     if(input.action==='bind') {
-      const code=String(input.code??'').replace(/\s/g,'').toUpperCase(); const teamId=String(input.teamId??'');
-      if(!/^[A-F0-9]{10}$/.test(code) || !teamId || teamId.length>100) throw new ApiError(400,'Confira o código de 10 caracteres e o barco.');
-      // Positions belong to the boat, not the phone: linking a new phone to a boat that already has
-      // one swaps them (the boat keeps its name, colour and history on the map). The old phone is
-      // retired and its open trip closed.
-      const previous=await db.from('tracker_devices').select('id').eq('team_id',teamId).eq('enabled',true).neq('display_code',code);
-      if(previous.error) throw new ApiError(503,'Não foi possível conferir o aparelho atual do barco.');
-      for(const old of previous.data) {
-        const ended=await db.from('tracker_sessions').update({ended_at:new Date().toISOString()}).eq('device_id',old.id).is('ended_at',null);
-        const disabled=await db.from('tracker_devices').update({enabled:false}).eq('id',old.id);
-        if(ended.error || disabled.error) throw new ApiError(503,'Não foi possível retirar o aparelho anterior.');
-      }
-      const result=await db.rpc('tracker_bind_device',{p_code:code,p_team:teamId});
-      if(result.error) {
-        if(result.error.code==='23505') throw new ApiError(409,'Este barco já tem um tracker. Desative o anterior primeiro.');
-        if(result.error.message.includes('device_not_found')) throw new ApiError(404,'Código não encontrado. Abra o app com internet primeiro.');
-        if(result.error.message.includes('device_has_active_trip')) throw new ApiError(409,'Encerre a viagem antes de trocar de barco.');
-        throw new ApiError(400,'Não foi possível vincular este aparelho.');
-      }
+      const code=deviceCode(input.code); const teamId=String(input.teamId??'');
+      if(!isDeviceCode(code) || !teamId || teamId.length>100) throw new ApiError(400,'Confira o ID de 10 caracteres e o barco.');
+      await bindDevice(db,code,teamId);
+    } else if(input.action==='saveBoat') {
+      // The whole boat in one save: name, map appearance (colour, hull form, outboard count) and its
+      // phone. teams.color stays the DSB app's badge; the map colour lives in map_color (unchanged
+      // when none is picked). `code` only comes when the phone changed: empty unlinks it.
+      const teamId=String(input.teamId??''),name=String(input.name??'').trim(),color=input.color==null||input.color===''?null:input.color,hull=String(input.hull??''),motors=Number(input.motors);
+      const code=input.code===undefined?null:deviceCode(input.code);
+      if(!teamId || teamId.length>100) throw new ApiError(400,'Barco inválido.');
+      if(name.length<2 || name.length>60) throw new ApiError(400,'O nome precisa ter de 2 a 60 caracteres.');
+      if((color!==null && !isTeamColor(color)) || !HULLS.includes(hull) || ![1,2,3].includes(motors)) throw new ApiError(400,'Aparência inválida.');
+      if(code && !isDeviceCode(code)) throw new ApiError(400,'O ID do aparelho tem 10 caracteres (números e letras de A a F).');
+      // The phone first: when its ID is wrong, nothing is saved and the form stays as typed.
+      if(code) await bindDevice(db,code,teamId); else if(code==='') await unlinkDevices(db,teamId);
+      const result=await db.from('teams').update({name,...(color?{map_color:color}:{}),boat_hull:hull,boat_motors:motors}).eq('id',teamId).select('id').single();
+      if(result.error) throw new ApiError(missingMigration(result.error.code)?503:400,missingMigration(result.error.code)?'Aplique a migração de cores no mapa no banco.':'Não foi possível salvar o barco.');
     } else if(input.action==='disable') {
       if(typeof input.id!=='string') throw new ApiError(400,'Aparelho inválido.');
       const result=await db.from('tracker_devices').update({enabled:false}).eq('id',input.id).select('id').single();
