@@ -227,7 +227,7 @@ function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, co
   const [picking, setPicking] = useState<string | null>(null);
   const spare = devices.filter(d => !d.team_id).sort(recent);
   const spareShown = spare.filter(d => d.display_code.includes(typedCode(spareQuery)));
-  const endTrip = (device: Device, owner?: Team) => confirm({title: 'Encerrar viagem?', message: `${owner?.name ?? 'O barco'} sai do mapa ao vivo e o trajeto fica guardado no histórico. Desligue o tracker antes: se ele continuar enviando posições, uma nova viagem começa sozinha.`, action: 'Encerrar viagem', input: {action: 'endTrip', id: device.id}, keep: true});
+  const endTrip = (device: Device, owner?: Team) => confirm({title: 'Encerrar viagem?', message: `A viagem de ${owner?.name ?? 'o barco'} é fechada e o trajeto fica guardado no histórico. O tracker não é desligado: enquanto ele enviar posições, o barco continua no mapa. Para tirá-lo do mapa, desligue o tracker ou remova o aparelho do barco.`, action: 'Encerrar viagem', input: {action: 'endTrip', id: device.id}, keep: true});
 
   // The boat screen opens at its top; going back returns to where the list was.
   const wrap = useRef<HTMLDivElement>(null), listScroll = useRef(0);
