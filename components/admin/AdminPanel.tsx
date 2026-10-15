@@ -207,19 +207,16 @@ function CourseTab({course}: {course: CourseControls}) {
   </div>;
 }
 
+type Mutate = (input: Record<string, unknown>, done?: string, keep?: boolean) => Promise<boolean>;
+const seen = (device: Device) => device.last_seen_at ? `visto ${positionAge(device.last_seen_at)}` : 'nunca conectou';
+const recent = (a: Device, b: Device) => (b.last_seen_at ?? '').localeCompare(a.last_seen_at ?? '');
+
 /**
- * Boats and their tracker phones in one list: each boat shows the ID of the phone it is using, and
- * tapping it edits everything about that boat (name, phone ID, map appearance) with a single save.
- * Phones not on a boat (never linked, or retired by a swap) come last.
+ * Boats and their tracker phones: the list shows each boat with the phone it is using; tapping one
+ * opens that boat on its own screen (phones, and how it looks on the map). Phones not on a boat come last.
  */
-function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, confirm}: {teams: Team[]; devices: Device[]; onTrip: Set<string>; editing: string | null; setEditing: (id: string | null) => void; busy: boolean; mutate: (input: Record<string, unknown>, done?: string, keep?: boolean) => Promise<boolean>; confirm: (c: Confirm) => void}) {
+function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, confirm}: {teams: Team[]; devices: Device[]; onTrip: Set<string>; editing: string | null; setEditing: (id: string | null) => void; busy: boolean; mutate: Mutate; confirm: (c: Confirm) => void}) {
   const [adding, setAdding] = useState(false);
-  // The hull picked in the open form: rescue and support craft have no motor count.
-  const [hull, setHull] = useState<string | null>(null);
-  // ID typed to leave a phone ready on the boat being edited.
-  const [newCode, setNewCode] = useState('');
-  const open = (id: string | null) => { setHull(null); setNewCode(''); setEditing(id); };
-  const recent = (a: Device, b: Device) => (b.last_seen_at ?? '').localeCompare(a.last_seen_at ?? '');
   const deviceOf = (teamId: string) => devices.find(d => d.enabled && d.team_id === teamId);
   /** Phones left ready on a boat: they send nothing until the organizer activates one. */
   const reservesOf = (teamId: string) => devices.filter(d => !d.enabled && d.team_id === teamId).sort(recent);
@@ -230,89 +227,28 @@ function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, co
   const [picking, setPicking] = useState<string | null>(null);
   const spare = devices.filter(d => !d.team_id).sort(recent);
   const spareShown = spare.filter(d => d.display_code.includes(typedCode(spareQuery)));
-  const seen = (device: Device) => device.last_seen_at ? `visto ${positionAge(device.last_seen_at)}` : 'nunca conectou';
-  const endTrip = (device: Device, owner?: Team) => confirm({title: 'Encerrar viagem?', message: `${owner?.name ?? 'O barco'} sai do mapa ao vivo e o trajeto fica guardado no histórico. Desligue o tracker antes: se ele continuar enviando posições, uma nova viagem começa sozinha.`, action: 'Encerrar viagem', input: {action: 'endTrip', id: device.id}});
-  /** The boat's phones: the active one and the spares, with activate, deactivate, add and remove. */
-  const phones = (boat: Team) => {
-    const active = deviceOf(boat.id), reserves = reservesOf(boat.id);
-    const activate = (device: Device) => confirm({
-      title: active ? 'Trocar o aparelho ativo?' : 'Ativar aparelho?',
-      message: `O aparelho ${device.display_code} passa a enviar as posições de ${boat.name}.${active ? ` O ${active.display_code} para de enviar e fica como reserva${onTrip.has(active.id) ? ' (a viagem dele é encerrada)' : ''}. O barco continua o mesmo no mapa e no histórico.` : ''}`,
-      action: 'Ativar', input: {action: 'bind', code: device.display_code, teamId: boat.id}, done: `${device.display_code} ativo em ${boat.name}.`, keep: true,
-    });
-    const add = (code = typedCode(newCode)) => {
-      if (!code) return;
-      void mutate({action: 'addSpare', code, teamId: boat.id}, `${code} pronto como reserva de ${boat.name}.`, true).then(ok => { if (ok) setNewCode(''); });
-    };
-    // From 3 characters on, phones without a boat whose ID has what was typed (tap to add).
-    const typed = typedCode(newCode);
-    const suggestions = typed.length >= 3 && typed.length < 10 ? spare.filter(d => d.display_code.includes(typed)).slice(0, 5) : [];
-    return <div className="adm-field">
-      <span>Aparelhos</span>
-      <ul className="adm-phones">
-        {active && <li>
-          <span className="adm-row-main"><code>{active.display_code}</code><small>{seen(active)}</small></span>
-          <span className="adm-tag on">Ativo</span>
-          <button type="button" className="adm-button small" disabled={busy} onClick={() => confirm({title: 'Desativar o aparelho?', message: `${boat.name} fica sem aparelho ativo e sai do mapa ao vivo. O ${active.display_code} para de enviar posições e continua na lista como reserva.`, action: 'Desativar', input: {action: 'deactivate', teamId: boat.id}, done: `${active.display_code} desativado.`, keep: true})}>Desativar</button>
-        </li>}
-        {reserves.map(device => <li key={device.id}>
-          <span className="adm-row-main"><code>{device.display_code}</code><small>Reserva · {seen(device)}</small></span>
-          <button type="button" className="adm-button small primary" disabled={busy} onClick={() => activate(device)}>Ativar</button>
-          <button type="button" className="adm-icon" disabled={busy} aria-label={`Tirar o aparelho ${device.display_code} do barco`} onClick={() => void mutate({action: 'removeSpare', id: device.id}, `${device.display_code} saiu de ${boat.name}.`, true)}>×</button>
-        </li>)}
-        {!active && !reserves.length && <li className="adm-hint">Nenhum aparelho.</li>}
-      </ul>
-      <div className="adm-add-phone">
-        <input value={newCode} onChange={e => setNewCode(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-          placeholder="ID do aparelho" maxLength={11} autoComplete="off" autoCapitalize="characters" spellCheck={false} className="adm-code" aria-label="ID do aparelho para deixar pronto" />
-        <button type="button" className="adm-button" disabled={busy || !typed} onClick={() => add()}>Adicionar</button>
-      </div>
-      {suggestions.length > 0 && <ul className="adm-phones">
-        {suggestions.map(d => <li key={d.id}><button type="button" className="adm-pick-row" disabled={busy} onClick={() => add(d.display_code)}>
-          <code>{d.display_code}</code><small>{seen(d)}</small><span className="adm-pick-add">Adicionar</span>
-        </button></li>)}
-      </ul>}
-      <p className="adm-hint">Só o aparelho ativo envia posições. Os outros ficam prontos como reserva: toque em Ativar para trocar na hora.</p>
-    </div>;
-  };
+  const endTrip = (device: Device, owner?: Team) => confirm({title: 'Encerrar viagem?', message: `${owner?.name ?? 'O barco'} sai do mapa ao vivo e o trajeto fica guardado no histórico. Desligue o tracker antes: se ele continuar enviando posições, uma nova viagem começa sozinha.`, action: 'Encerrar viagem', input: {action: 'endTrip', id: device.id}, keep: true});
+
+  // The boat screen opens at its top; going back returns to where the list was.
+  const wrap = useRef<HTMLDivElement>(null), listScroll = useRef(0);
+  const open = (id: string) => { listScroll.current = wrap.current?.closest('.adm-body')?.scrollTop ?? 0; setEditing(id); };
+  useEffect(() => { const body = wrap.current?.closest('.adm-body'); if (body) body.scrollTop = editing ? 0 : listScroll.current; }, [editing]);
+
+  const boat = teams.find(t => t.id === editing);
+  if (boat) return <div ref={wrap}>
+    <BoatScreen key={boat.id} boat={boat} teams={teams} active={deviceOf(boat.id)} reserves={reservesOf(boat.id)} spare={spare} onTrip={onTrip}
+      busy={busy} mutate={mutate} confirm={confirm} endTrip={endTrip} onBack={() => setEditing(null)} />
+  </div>;
 
   const row = (boat: Team) => {
-    const device = deviceOf(boat.id), trip = !!device && onTrip.has(device.id);
-    const draft = hull ?? boat.boat_hull ?? 'cat', motors = boat.boat_motors ?? 1;
-    const save = (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      // The phones change in their own list above (right away); this saves the boat itself.
-      const form = new FormData(event.currentTarget), name = String(form.get('name') ?? '').trim();
-      void mutate({action: 'saveBoat', teamId: boat.id, name, color: form.get('color'), hull: form.get('hull'), motors: Number(form.get('motors') ?? motors)}, `${name} salvo.`);
-    };
-    const reserves = reservesOf(boat.id).length;
+    const device = deviceOf(boat.id), trip = !!device && onTrip.has(device.id), reserves = reservesOf(boat.id).length;
     return <li key={boat.id}>
-      <button className="adm-row" aria-expanded={editing === boat.id} onClick={() => open(editing === boat.id ? null : boat.id)}>
+      <button className="adm-row" onClick={() => open(boat.id)}>
         <TeamBadge team={boat} />
         <span className="adm-row-main"><strong>{boat.name}</strong><small>{device ? <><code>{device.display_code}</code> · {seen(device)}</> : 'Sem aparelho ativo'}{reserves > 0 && ` · ${reserves} ${reserves === 1 ? 'reserva' : 'reservas'}`}</small></span>
         {trip && <span className="adm-tag on">Em viagem</span>}
         <span className="adm-chevron" aria-hidden="true">›</span>
       </button>
-      {editing === boat.id && <form className="adm-edit" onSubmit={save}>
-        <label className="adm-field"><span>Nome</span><input name="name" defaultValue={boat.name} maxLength={60} required autoComplete="off" /></label>
-        {!isRegisteredHere(boat) && <p className="adm-hint">O nome muda também no app (resultados, fantasy e chat).</p>}
-        {phones(boat)}
-        {trip && <button type="button" className="adm-button adm-wide" disabled={busy} onClick={() => endTrip(device, boat)}>Encerrar viagem</button>}
-        <fieldset className="adm-colors"><legend>Cor no mapa</legend>
-          {TEAM_COLORS.map(({hex, label}) => {
-            // Colours already on another boat are marked, so each boat can keep its own.
-            const taken = teams.filter(t => t.id !== boat.id && colorOf(t) === hex).map(t => t.name);
-            return <label key={hex} title={taken.length ? `${label} · já usada por ${taken.join(', ')}` : label} className={taken.length ? 'taken' : undefined}><input type="radio" name="color" value={hex} defaultChecked={colorOf(boat) === hex} /><span style={{background: hex}} /></label>;
-          })}
-        </fieldset>
-        <div className="adm-two">
-          <label className="adm-field"><span>Embarcação</span><select name="hull" value={draft} onChange={e => setHull(e.target.value)}>{HULLS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-          {(draft === 'cat' || draft === 'mono') && <label className="adm-field"><span>Motores</span><select name="motors" defaultValue={String(motors)}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>}
-        </div>
-        {draft !== (boat.boat_hull ?? 'cat') && (draft === 'jetski' || draft === 'support') && <p className="adm-hint">Continua no mapa ao vivo, mas sai da classificação e da escalação do app.</p>}
-        <button className="adm-button primary adm-wide" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
-        {isRegisteredHere(boat) && <button type="button" className="adm-button danger adm-wide" disabled={busy} onClick={() => confirm({title: `Excluir ${boat.name}?`, message: `${boat.name} sai da lista e do mapa, e os trajetos, posições e SOS dele são apagados. Não dá para desfazer.`, action: 'Excluir', danger: true, input: {action: 'deleteBoat', teamId: boat.id}, done: `${boat.name} excluído.`})}>Excluir barco</button>}
-      </form>}
     </li>;
   };
 
@@ -335,8 +271,8 @@ function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, co
   };
 
   const competitors = teams.filter(t => !isCraft(t)), craft = teams.filter(isCraft);
-  return <div className="adm-stack">
-    <p className="adm-hint">Toque em um barco para mudar o nome, os aparelhos (o ativo e as reservas) e como ele aparece no mapa.</p>
+  return <div className="adm-stack" ref={wrap}>
+    <p className="adm-hint">Toque em um barco para trocar o aparelho ou mudar como ele aparece no mapa.</p>
     <ul className="adm-card adm-list">{competitors.map(row)}</ul>
     {craft.length > 0 && <><h3 className="adm-section">Resgate e apoio <small>{craft.length}</small></h3><ul className="adm-card adm-list">{craft.map(row)}</ul></>}
     {adding ? <form className="adm-card adm-pad adm-form" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void mutate({action: 'createBoat', name: form.get('name'), initials: form.get('initials'), hull: form.get('hull')}, 'Barco cadastrado.').then(() => setAdding(false)); }}>
@@ -358,6 +294,127 @@ function BoatsTab({teams, devices, onTrip, editing, setEditing, busy, mutate, co
       </>}
     </>}
   </div>;
+}
+
+/** One boat on its own screen: its phones (what changes during the race) or how it looks on the map. */
+function BoatScreen({boat, teams, active, reserves, spare, onTrip, busy, mutate, confirm, endTrip, onBack}: {
+  boat: Team; teams: Team[]; active?: Device; reserves: Device[]; spare: Device[]; onTrip: Set<string>; busy: boolean;
+  mutate: Mutate; confirm: (c: Confirm) => void; endTrip: (device: Device, owner?: Team) => void; onBack: () => void;
+}) {
+  const [view, setView] = useState<'phones' | 'look'>('phones');
+  const trip = !!active && onTrip.has(active.id);
+  return <div className="adm-stack">
+    <button className="adm-back" onClick={onBack}><span aria-hidden="true">‹</span> Barcos</button>
+    <div className="adm-boat-head">
+      <TeamBadge team={boat} size={48} />
+      <div className="adm-row-main">
+        <strong>{boat.name}</strong>
+        <small>{trip ? <span className="adm-live">● Em viagem</span> : active ? 'Com aparelho ativo' : 'Sem aparelho ativo'}</small>
+      </div>
+    </div>
+    <div className="adm-seg" role="radiogroup" aria-label="O que mudar no barco">
+      <button role="radio" aria-checked={view === 'phones'} onClick={() => setView('phones')}>Aparelhos</button>
+      <button role="radio" aria-checked={view === 'look'} onClick={() => setView('look')}>Nome e aparência</button>
+    </div>
+    {view === 'phones'
+      ? <BoatPhones boat={boat} active={active} reserves={reserves} spare={spare} trip={trip} busy={busy} mutate={mutate} confirm={confirm} endTrip={endTrip} />
+      : <BoatLook boat={boat} teams={teams} busy={busy} mutate={mutate} confirm={confirm} />}
+  </div>;
+}
+
+/** The phone sending the boat's positions and the spares ready to take over (one tap to swap). */
+function BoatPhones({boat, active, reserves, spare, trip, busy, mutate, confirm, endTrip}: {
+  boat: Team; active?: Device; reserves: Device[]; spare: Device[]; trip: boolean; busy: boolean;
+  mutate: Mutate; confirm: (c: Confirm) => void; endTrip: (device: Device, owner?: Team) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [code, setCode] = useState('');
+  const typed = typedCode(code);
+  // From 3 characters on, phones without a boat whose ID has what was typed (tap to add).
+  const suggestions = typed.length >= 3 && typed.length < 10 ? spare.filter(d => d.display_code.includes(typed)).slice(0, 5) : [];
+  const add = (id = typed) => {
+    if (!id) return;
+    void mutate({action: 'addSpare', code: id, teamId: boat.id}, `${id} pronto como reserva de ${boat.name}.`, true).then(ok => { if (ok) { setCode(''); setAdding(false); } });
+  };
+  const activate = (device: Device) => confirm({
+    title: active ? 'Trocar o aparelho ativo?' : 'Ativar aparelho?',
+    message: `O aparelho ${device.display_code} passa a enviar as posições de ${boat.name}.${active ? ` O ${active.display_code} para de enviar e fica como reserva${trip ? ' (a viagem dele é encerrada)' : ''}. O barco continua o mesmo no mapa e no histórico.` : ''}`,
+    action: 'Ativar', input: {action: 'bind', code: device.display_code, teamId: boat.id}, done: `${device.display_code} ativo em ${boat.name}.`, keep: true,
+  });
+
+  return <>
+    <section className="adm-group">
+      <h3 className="adm-label">Ativo agora</h3>
+      {active
+        ? <div className="adm-card adm-active">
+          <span className="adm-dot" aria-hidden="true" />
+          <span className="adm-row-main"><code>{active.display_code}</code><small>{seen(active)}</small></span>
+          <button className="adm-button small ghost" disabled={busy} onClick={() => confirm({title: 'Desativar o aparelho?', message: `${boat.name} fica sem aparelho ativo e sai do mapa ao vivo. O ${active.display_code} para de enviar posições e fica como reserva.`, action: 'Desativar', input: {action: 'deactivate', teamId: boat.id}, done: `${active.display_code} desativado.`, keep: true})}>Desativar</button>
+        </div>
+        : <p className="adm-card adm-empty">Nenhum aparelho enviando posições. Ative uma reserva abaixo.</p>}
+      {trip && <button className="adm-button adm-wide" disabled={busy} onClick={() => endTrip(active!, boat)}>Encerrar viagem</button>}
+    </section>
+
+    <section className="adm-group">
+      <h3 className="adm-label">Reservas {reserves.length > 0 && <small>{reserves.length}</small>}</h3>
+      {reserves.length > 0 && <ul className="adm-card adm-list">
+        {reserves.map(device => <li key={device.id} className="adm-spare">
+          <span className="adm-row-main"><code>{device.display_code}</code><small>{seen(device)}</small></span>
+          <button className="adm-button small brand" disabled={busy} onClick={() => activate(device)}>Ativar</button>
+          <button className="adm-icon" disabled={busy} aria-label={`Tirar o aparelho ${device.display_code} do barco`} onClick={() => void mutate({action: 'removeSpare', id: device.id}, `${device.display_code} saiu de ${boat.name}.`, true)}>×</button>
+        </li>)}
+      </ul>}
+      {adding
+        ? <div className="adm-card adm-pad">
+          <div className="adm-add-phone">
+            <input autoFocus value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } else if (e.key === 'Escape') setAdding(false); }}
+              placeholder="ID do aparelho" maxLength={11} autoComplete="off" autoCapitalize="characters" spellCheck={false} className="adm-code" aria-label="ID do aparelho" />
+            <button className="adm-button primary" disabled={busy || !typed} onClick={() => add()}>Adicionar</button>
+          </div>
+          {suggestions.length > 0 && <ul className="adm-phones">
+            {suggestions.map(d => <li key={d.id}><button className="adm-pick-row" disabled={busy} onClick={() => add(d.display_code)}>
+              <code>{d.display_code}</code><small>{seen(d)}</small><span className="adm-pick-add">Adicionar</span>
+            </button></li>)}
+          </ul>}
+          <p className="adm-hint">O código de 10 caracteres que aparece no DSB Tracker. <button className="adm-link" onClick={() => { setAdding(false); setCode(''); }}>Cancelar</button></p>
+        </div>
+        : <button className="adm-button adm-wide" onClick={() => setAdding(true)}>＋ Adicionar reserva</button>}
+      <p className="adm-hint">Só o aparelho ativo envia posições. Ativar uma reserva troca na hora, e o anterior vira reserva.</p>
+    </section>
+  </>;
+}
+
+/** Name and how the boat looks on the map (colour, hull, outboards), saved together. */
+function BoatLook({boat, teams, busy, mutate, confirm}: {boat: Team; teams: Team[]; busy: boolean; mutate: Mutate; confirm: (c: Confirm) => void}) {
+  // Rescue and support craft have no motor count.
+  const [hull, setHull] = useState(boat.boat_hull ?? 'cat');
+  const motors = boat.boat_motors ?? 1;
+  const save = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget), name = String(form.get('name') ?? '').trim();
+    void mutate({action: 'saveBoat', teamId: boat.id, name, color: form.get('color'), hull, motors: Number(form.get('motors') ?? motors)}, `${name} salvo.`);
+  };
+  return <form className="adm-card adm-pad" onSubmit={save}>
+    <label className="adm-field"><span>Nome</span><input name="name" defaultValue={boat.name} maxLength={60} required autoComplete="off" /></label>
+    {!isRegisteredHere(boat) && <p className="adm-hint adm-tight">Muda também no app (resultados, fantasy e chat).</p>}
+    <div className="adm-two">
+      <label className="adm-field"><span>Embarcação</span><select value={hull} onChange={e => setHull(e.target.value)}>{HULLS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+      {(hull === 'cat' || hull === 'mono') && <fieldset className="adm-field adm-motors"><span>Motores</span>
+        <div className="adm-seg">{[1, 2, 3].map(n => <label key={n}><input type="radio" name="motors" value={n} defaultChecked={motors === n} /><span>{n}</span></label>)}</div>
+      </fieldset>}
+    </div>
+    {hull !== (boat.boat_hull ?? 'cat') && (hull === 'jetski' || hull === 'support') && <p className="adm-hint adm-tight">Continua no mapa ao vivo, mas sai da classificação e da escalação do app.</p>}
+    <fieldset className="adm-colors"><legend>Cor no mapa</legend>
+      {TEAM_COLORS.map(({hex, label}) => {
+        // Colours already on another boat are struck through, so each boat can keep its own.
+        const taken = teams.filter(t => t.id !== boat.id && colorOf(t) === hex).map(t => t.name);
+        return <label key={hex} title={taken.length ? `${label} · já usada por ${taken.join(', ')}` : label} className={taken.length ? 'taken' : undefined}><input type="radio" name="color" value={hex} defaultChecked={colorOf(boat) === hex} aria-label={label} /><span style={{background: hex}} /></label>;
+      })}
+    </fieldset>
+    <p className="adm-hint adm-tight">As cores riscadas já estão em outro barco.</p>
+    <button className="adm-button primary adm-wide" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+    {isRegisteredHere(boat) && <button type="button" className="adm-button danger adm-wide" disabled={busy} onClick={() => confirm({title: `Excluir ${boat.name}?`, message: `${boat.name} sai da lista e do mapa, e os trajetos, posições e SOS dele são apagados. Não dá para desfazer.`, action: 'Excluir', danger: true, input: {action: 'deleteBoat', teamId: boat.id}, done: `${boat.name} excluído.`})}>Excluir barco</button>}
+  </form>;
 }
 
 function SosTab({alerts, team, busy, confirm}: {alerts: Alert[]; team: (id: string | null) => Team | undefined; busy: boolean; confirm: (c: Confirm) => void}) {
