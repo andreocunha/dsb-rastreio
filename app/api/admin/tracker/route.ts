@@ -151,7 +151,7 @@ export async function POST(request:Request) {
       const result=await db.from('tracker_devices').update({enabled:false}).eq('id',input.id).select('id').single();
       if(result.error) throw new ApiError(400,'Não foi possível desativar.');
     } else if(input.action==='endTrip') {
-      // Fecha a viagem aberta do aparelho: o barco sai do mapa ao vivo; o histórico fica guardado.
+      // Fecha a viagem aberta do aparelho: o barco sai do mapa ao vivo depois de 1 h; o histórico fica guardado.
       if(typeof input.id!=='string' || input.id.length>100) throw new ApiError(400,'Aparelho inválido.');
       const result=await db.from('tracker_sessions').update({ended_at:new Date().toISOString()}).eq('device_id',input.id).is('ended_at',null);
       if(result.error) throw new ApiError(503,'Não foi possível encerrar a viagem.');
