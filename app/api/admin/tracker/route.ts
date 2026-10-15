@@ -81,6 +81,18 @@ async function bindDevice(db:Database,code:string,teamId:string) {
     throw new ApiError(400,'Não foi possível vincular este aparelho.');
   }
 }
+/**
+ * Leaves a phone ready on a boat without turning it on: a spare (team_id set, enabled false). It
+ * sends nothing until the organizer activates it, so two phones never track the same boat at once.
+ */
+async function addSpare(db:Database,code:string,teamId:string) {
+  const found=await db.from('tracker_devices').select('id,team_id,enabled').eq('display_code',code).maybeSingle();
+  if(found.error) throw new ApiError(503,'Não foi possível conferir o aparelho.');
+  if(!found.data) throw new ApiError(404,'ID de aparelho não encontrado. Abra o DSB Tracker com internet no aparelho primeiro.');
+  if(found.data.enabled) throw new ApiError(409,found.data.team_id===teamId?'Este já é o aparelho ativo do barco.':'Este aparelho está ativo em outro barco. Desative ele lá primeiro.');
+  const saved=await db.from('tracker_devices').update({team_id:teamId}).eq('id',found.data.id).eq('enabled',false).select('id').single();
+  if(saved.error) throw new ApiError(400,'Não foi possível adicionar o aparelho.');
+}
 const deviceCode=(value:unknown)=>String(value??'').replace(/\s/g,'').toUpperCase();
 const isDeviceCode=(code:string)=>/^[A-F0-9]{10}$/.test(code);
 
@@ -89,7 +101,7 @@ export async function GET() {
     await operator(); const db=database();
     const [teams,devices,alerts,trips]=await Promise.all([
       db.from('teams').select('*').eq('active',true).order('name'),
-      db.from('tracker_devices').select('id,display_code,team_id,enabled,created_at,last_seen_at').order('created_at',{ascending:false}).limit(500),
+      db.from('tracker_devices').select('id,display_code,team_id,enabled,created_at,last_seen_at').order('created_at',{ascending:false}),
       db.from('tracker_sos').select('id,team_id,status,triggered_at,received_at,lat_e7,lon_e7').neq('status','resolved').order('received_at',{ascending:false}).limit(100),
       db.from('tracker_sessions').select('device_id').is('ended_at',null).not('device_id','is',null).limit(500),
     ]);
@@ -106,6 +118,20 @@ export async function POST(request:Request) {
       const code=deviceCode(input.code); const teamId=String(input.teamId??'');
       if(!isDeviceCode(code) || !teamId || teamId.length>100) throw new ApiError(400,'Confira o ID de 10 caracteres e o barco.');
       await bindDevice(db,code,teamId);
+    } else if(input.action==='addSpare') {
+      const code=deviceCode(input.code); const teamId=String(input.teamId??'');
+      if(!isDeviceCode(code) || !teamId || teamId.length>100) throw new ApiError(400,'O ID do aparelho tem 10 caracteres (números e letras de A a F).');
+      await addSpare(db,code,teamId);
+    } else if(input.action==='removeSpare') {
+      // The spare leaves the boat and goes back to the phones without a boat.
+      if(typeof input.id!=='string' || input.id.length>100) throw new ApiError(400,'Aparelho inválido.');
+      const result=await db.from('tracker_devices').update({team_id:null}).eq('id',input.id).eq('enabled',false).select('id').single();
+      if(result.error) throw new ApiError(400,'Não foi possível remover o aparelho.');
+    } else if(input.action==='deactivate') {
+      // The boat's active phone becomes a spare: its trip closes and it stops sending positions.
+      const teamId=String(input.teamId??'');
+      if(!teamId || teamId.length>100) throw new ApiError(400,'Barco inválido.');
+      await unlinkDevices(db,teamId);
     } else if(input.action==='saveBoat') {
       // The whole boat in one save: name, map appearance (colour, hull form, outboard count) and its
       // phone. teams.color stays the DSB app's badge; the map colour lives in map_color (unchanged
@@ -135,7 +161,7 @@ export async function POST(request:Request) {
     } else if(input.action==='deleteMany') {
       // Several at once (old test phones). Each is checked like a single delete; the ones on a trip stay.
       const ids=Array.isArray(input.ids)?input.ids.filter((id:unknown)=>typeof id==='string' && id.length<=100):[];
-      if(!ids.length || ids.length>200) throw new ApiError(400,'Selecione de 1 a 200 aparelhos.');
+      if(!ids.length || ids.length>5000) throw new ApiError(400,'Selecione os aparelhos.');
       let deleted=0; const kept:string[]=[];
       for(const id of ids) {
         try { await deleteDevice(db,id); deleted++; }

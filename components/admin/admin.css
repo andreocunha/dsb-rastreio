@@ -112,7 +112,6 @@
 .adm-chevron { flex-shrink: 0; color: var(--text-tertiary); font-size: 20px; line-height: 1; transition: transform .15s; }
 [aria-expanded="true"] > .adm-chevron { transform: rotate(90deg); }
 /* Phones without a boat: pick the boat right on the row. 16px avoids iOS zooming in on focus. */
-.adm-pick { max-width: 132px; min-height: 36px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
 .adm-device code { font-size: 13px; }
 
 .adm-edit { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 14px; }
@@ -137,3 +136,20 @@
 /* Section heading that folds its list (phones without a boat). */
 .dsb-admin button.adm-toggle { width: 100%; min-height: 40px; padding: 0 4px; color: var(--text-secondary); font-size: 13px; font-weight: 600; text-align: left; }
 .adm-toggle .adm-chevron { margin-left: auto; }
+/* Aparelhos do barco: o ativo e as reservas, uma linha cada. */
+.adm-phones { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; list-style: none; }
+.adm-phones > li { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 6px 6px 6px 12px; }
+.adm-phones > li + li { border-top: 1px solid var(--border); }
+.adm-phones > li.adm-hint { padding-left: 12px; }
+.adm-phones code { font-size: 14px; letter-spacing: 1px; }
+.adm-add-phone { display: flex; gap: 8px; }
+.adm-add-phone input { flex: 1; min-width: 0; min-height: 42px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-subtle); color: var(--text); font-size: 16px; }
+.adm-add-phone input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+/* Escolher um barco com busca (no lugar do select) e sugestões de ID. */
+.adm-picker { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.adm-picker .adm-phones { max-height: 260px; overflow-y: auto; }
+.adm-pick-row { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; min-height: 36px; color: inherit; font: inherit; font-size: 14px; text-align: left; }
+.adm-pick-row small { color: var(--text-secondary); font-size: 12px; }
+.adm-pick-add { margin-left: auto; color: var(--brand); font-size: 13px; font-weight: 600; }
+.adm-search { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-subtle); color: var(--text); font-size: 16px; }
+.adm-search:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
