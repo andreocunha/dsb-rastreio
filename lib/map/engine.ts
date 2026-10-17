@@ -424,17 +424,33 @@ export function initEngine(
     background.style.top = `${-BACKGROUND_MARGIN}px`;
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     backgroundCtx.setTransform(backgroundDpr, 0, 0, backgroundDpr, 0, 0);
+    refitIfUntouched();
   }
 
+  // The last automatic framing: while nobody moves the map, a new size (the embedding app showing a
+  // hidden map, a phone rotating) frames the course again instead of keeping a fit made for another size.
+  let autoView: {padding: Partial<Record<'left' | 'right' | 'top' | 'bottom', number>>; zoom: number; cx: number; cy: number} | null = null;
   function fit(padding: Partial<Record<'left' | 'right' | 'top' | 'bottom', number>> = {}) {
     state.followBoatId = null;
     const mobile = state.width < 700;
     const left = padding.left ?? (mobile ? 24 : 310), right = padding.right ?? (mobile ? 66 : 90);
-    const top = padding.top ?? (mobile ? 90 : 70), bottom = padding.bottom ?? (mobile ? 180 : 90);
-    const points = [...state.buoys, ...state.routes.flatMap(r => r.points), ...state.maintenanceArea, ...state.waitingArea, ...[state.finishLine.p1, state.finishLine.p2].filter(p => p !== null)];
+    // Phones: the race pill on top, the boat strip at the bottom.
+    const top = padding.top ?? (mobile ? 72 : 70), bottom = padding.bottom ?? (mobile ? 96 : 90);
+    // Frame the race itself (buoys, routes, finish and the waiting area where it is drawn); the
+    // support area only counts when there is nothing else, or a short course ends up small and off-centre.
+    const waiting = state.courseId === 'match-race' || state.courseId === 'slalom' ? state.waitingArea : [];
+    const race = [...state.buoys, ...state.routes.flatMap(r => r.points), ...waiting, ...[state.finishLine.p1, state.finishLine.p2].filter(p => p !== null)];
+    const points = race.length ? race : [...state.maintenanceArea, ...state.waitingArea];
     const venue = venueById(state.venueId);
-    const nw = points.length ? geoToWorld(Math.max(...points.map(p => p.lat)) + .00025, Math.min(...points.map(p => p.lon)) - .00025) : geoToWorld(venue.lat + .003, venue.lon - .003);
-    const se = points.length ? geoToWorld(Math.min(...points.map(p => p.lat)) - .00025, Math.max(...points.map(p => p.lon)) + .00025) : geoToWorld(venue.lat - .003, venue.lon + .003);
+    let nw = geoToWorld(venue.lat + .003, venue.lon - .003), se = geoToWorld(venue.lat - .003, venue.lon + .003);
+    if (points.length) {
+      const north = Math.max(...points.map(p => p.lat)), south = Math.min(...points.map(p => p.lat));
+      const west = Math.min(...points.map(p => p.lon)), east = Math.max(...points.map(p => p.lon));
+      // A small margin (about 7 m, more on long courses); the padding keeps the labels clear.
+      const latMargin = Math.max(.00006, (north - south) * .06), lonMargin = Math.max(.00006, (east - west) * .06);
+      nw = geoToWorld(north + latMargin, west - lonMargin);
+      se = geoToWorld(south - latMargin, east + lonMargin);
+    }
     const width = Math.max(170, state.width - left - right);
     const height = Math.max(180, state.height - top - bottom);
     state.zoom = Math.max(config.zoomMin, Math.min(config.zoomMax,
@@ -442,6 +458,10 @@ export function initEngine(
     const scale = 2 ** state.zoom * config.tileSize;
     state.worldCX = (nw.x + se.x) / 2 - (left - right) / 2 / scale;
     state.worldCY = (nw.y + se.y) / 2 - (top - bottom) / 2 / scale;
+    autoView = {padding, zoom: state.zoom, cx: state.worldCX, cy: state.worldCY};
+  }
+  function refitIfUntouched() {
+    if (autoView && state.followBoatId === null && state.zoom === autoView.zoom && state.worldCX === autoView.cx && state.worldCY === autoView.cy) fit(autoView.padding);
   }
   resize();
   fit();
